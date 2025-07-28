@@ -4,7 +4,7 @@ import os
 import sys
 
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
-from muon_pp import Muon
+from muon_pp import MuonPP
 
 os.environ["HF_TOKEN"] = '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'
 
@@ -18,10 +18,9 @@ model = AutoModelForCausalLM.from_pretrained(
     cache_dir="./model_cache"
 )
 
-print(list(model.named_parameters()))
-# optimizer = Muon(list(model.parameters()))
-# optimizer.zero_grad()
-# optimizer.step()
+optimizer = MuonPP(list(model.named_parameters()))
+optimizer.zero_grad()
+optimizer.step()
 
 # prompt = "Give me a short introduction to large language model."
 
