@@ -4,7 +4,7 @@ VENV  := .venv
 
 TEST_SCRIPT := src/test/test.py
 
-
+.PHONY: env test
 
 env:
 	@command -v uv >/dev/null 2>&1 || { \
@@ -12,10 +12,10 @@ env:
 		curl -LsSf https://astral.sh/uv/install.sh | sh; \
 	}
 	@echo "Setting up eval environment..."
-	@uv venv $(EVAL_VENV) --python $(PYTHON_VERSION) --no-project
-	@uv pip install -r requirements.txt --python $(EVAL_VENV)/bin/python
+	@uv venv $(VENV) --python $(PYTHON_VERSION) --no-project
+	@uv pip install -r requirements.txt --python $(VENV)/bin/python
 	@echo "Evaluation environment ready."
 
 
 test:
-	@$(TRAIN_VENV)/bin/accelerate launch $(SFT_SCRIPT) --config $(SFT_CONFIG)
+	@python3 $(TEST_SCRIPT)
