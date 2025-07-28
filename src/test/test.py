@@ -18,21 +18,21 @@ model = AutoModelForCausalLM.from_pretrained(
     cache_dir="./model_cache"
 )
 
+model.train()
+
+prompt = "The capital of France is"
+inputs = tokenizer(prompt, return_tensors="pt").to(model.device)
+labels = inputs["input_ids"].clone()
+inputs["labels"] = labels
+
+# Passer dans le modèle
+outputs = model(**inputs)
+loss = outputs.loss
+
+print(f"Dummy loss: {loss.item()}")
+
+# Optimiseur custom
 optimizer = MuonPP(list(model.named_parameters()))
 optimizer.zero_grad()
+loss.backward()
 optimizer.step()
-
-# prompt = "Give me a short introduction to large language model."
-
-# inputs = tokenizer(prompt, return_tensors="pt").to(model.device)
-# with torch.no_grad():
-#     outputs = model.generate(
-#         **inputs,
-#         max_new_tokens=50,
-#         do_sample=True,
-#         top_p=0.95,
-#         temperature=0.7
-#     )
-
-# # Résultat
-# print(tokenizer.decode(outputs[0], skip_special_tokens=True))
