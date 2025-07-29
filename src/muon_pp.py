@@ -12,44 +12,33 @@ class MuonPP(Optimizer):
         
         #filter Q and K matrix (for clipping) refer to: https://moonshotai.github.io/Kimi-K2/ 
         #filter non 2D-matrix (muon is a 2D matrix optimizer) : https://kellerjordan.github.io/posts/muon/
-        no_clip_group = []
-        clip_group = [] # Q and K projections
+        muon_group = [] 
         adam_group = []
         
         for name,p in params:
-            if "q_proj" in name or "k_proj" in name:
-                print(name)
-                clip_group.append(p)
-            elif len(p.shape) == 2 : 
-                no_clip_group.append(p)
+            if len(p.shape) == 2 : 
+                muon_group.append(p)
             else : 
                 adam_group.append(p) 
-        if not len(clip_group) : print("Warning: unable to find Q and K projection matrices. No clipping applied.")
+        
+        
+        #if not len(clip_group) : print("Warning: unable to find Q and K projection matrices. No clipping applied.")
 
         muon_config = dict(lr=0.02, momentum=0.95, weight_decay=0)
         adam_config = dict(lr=3e-4, betas=(0.9, 0.95), eps=1e-10, weight_decay=0)
         
-        clip_dic = muon_config.copy()
-        clip_dic.update({
-            "params": clip_group,
-            "clip": True,
-            "use_muon": True
-        })
-
-        no_clip_dic = muon_config.copy()
-        no_clip_dic.update({
-            "params": no_clip_group,
-            "clip": False,
+        muon_dic = muon_config.copy()
+        muon_dic.update({
+            "params": muon_group,
             "use_muon": True
         })
 
         adam_dic = adam_config.copy()
         adam_dic.update({
             "params": adam_group,
-            "clip": False,
             "use_muon": False
         })
-        super().__init__([clip_dic, no_clip_dic, adam_dic], dict())
+        super().__init__([muon_dic, adam_dic], dict())
 
     @torch.no_grad()
     def step(self, closure=None):
