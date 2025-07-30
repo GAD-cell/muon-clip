@@ -40,7 +40,7 @@ def repeat_kv(hidden_states: torch.Tensor, n_rep: int, num_key_value_heads: int,
     batch, slen, _ = hidden_states.shape
 
     if n_rep == 1: #num_attention_head==num_key_value_heads
-        return hidden_states.view(batch, slen, num_key_value_heads, head_dim)
+        return hidden_states.view(batch, num_key_value_heads, slen, head_dim)
     
     hidden_states = hidden_states.view(batch, slen, num_key_value_heads, -1, head_dim)    
     hidden_states = hidden_states.permute(0, 2, 3, 1, 4) 

@@ -2,16 +2,16 @@ import torch
 from torch.optim import Optimizer
 import torch.distributed as dist
 from typing import Tuple
-from utils.utils import adam_update, muon_update, hook_recorder, repeat_kv
+# import sys
+# import os
+# sys.path.append(os.path.dirname(__file__))
+from utils_muon import adam_update, muon_update, hook_recorder, repeat_kv
 import re
 
 
-
 class MuonPP(Optimizer):
-    def __init__(self, model, config, lr=0.02, weight_decay=0, momentum=0.95, enable_clipping=True, clipping_threshold=1.0, clipping_alpha=0.5):
+    def __init__(self, model, config, lr=0.02, weight_decay=0, momentum=0.95, enable_clipping=True, clipping_threshold=100.0, clipping_alpha=0.5):
         
-        #defaults = dict(lr=lr, weight_decay=weight_decay, momentum=momentum)
-        #assert isinstance(params, list) and all(isinstance(p, tuple) for p in params) and len(params) >= 1 and isinstance(params[0][1], torch.nn.Parameter), "Input params should be model.named_parameters()"
         self.enable_clipping = enable_clipping
         found_layer = hook_recorder.register_input_hook(model) # add forward hooks for q_proj and k_proj inputs
         if not found_layer : 
@@ -42,7 +42,7 @@ class MuonPP(Optimizer):
         
 
         muon_config = dict(lr=0.02, momentum=0.95, weight_decay=0)
-        adam_config = dict(lr=3e-4, betas=(0.9, 0.95), eps=1e-10, weight_decay=0)
+        adam_config = dict(lr=0.02, betas=(0.9, 0.95), eps=1e-10, weight_decay=0)
         
         muon_dic = muon_config.copy()
         muon_dic.update({
@@ -121,10 +121,31 @@ class MuonPP(Optimizer):
                                 self.model_config.num_key_value_heads,
                                 self.model_config.head_dim)
 
-            max_logits = torch.matmul(q_proj.transpose(-2,-1),k_proj).max() 
-            eta = min(self.t/max_logits,1)
-
-            q_param.mul_(torch.pow(eta,self.alpha))
-            k_param.mul_(torch.pow(eta,1-self.alpha))
+            attn_logits = torch.matmul(q_proj,k_proj.transpose(-2,-1))
+            per_head_max = attn_logits.amax(dim=(0, -2, -1))
+            per_head_eta = (self.t / per_head_max).clamp(max=1.0)
+            per_head_eta = per_head_eta.unsqueeze(0).unsqueeze(-1)
+            
+            #separate query params heads and scale by eta per head
+            transpose = q_param.data.size(0) > q_param.data.size(1) # if [out_dim,in_dim]
+            q = q_param.data.transpose(-2,-1) #if transpose else q_param.data
+            q = q.data.view(q.size(0), -1, self.model_config.head_dim)
+            q *= per_head_eta**self.alpha
+            q = q.view(q.size(0),-1) # original size (in_dim,out_dim)
+            q = q.transpose(-2,-1)
+            q_param.data.copy_(q.clone())
+            
+            #separate key params heads, scale eta per head and take into account kv cache
+            #For handling key heads, we take the minimum eta value within each KV head group, 
+            #applying the strongest (smallest) rescaling factor to ensure stability in the worst-case scenario.
+            transpose = k_param.data.size(0) > k_param.data.size(1)
+            k = k_param.data.transpose(-2,-1) if transpose else k_param.data
+            k = k.data.view(k.size(0), -1, self.model_config.head_dim)
+            per_key_head_eta = per_head_eta.view(per_head_eta.size(0), k.size(1), -1).min(dim=2).values #notice min for each group
+            per_key_head_eta = per_key_head_eta.unsqueeze(-1)
+            k *= per_key_head_eta**(1-self.alpha)
+            k = k.view(k.size(0),-1) # original size (in_dim,out_dim)
+            k = k.transpose(-2,-1)
+            k_param.data.copy_(k.clone())            
 
         return loss
