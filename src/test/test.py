@@ -4,7 +4,7 @@ import os
 import sys
 
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
-from muon_pp import Muon
+from muon_pp import MuonPP
 
 os.environ["HF_TOKEN"] = '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'
 
@@ -18,22 +18,21 @@ model = AutoModelForCausalLM.from_pretrained(
     cache_dir="./model_cache"
 )
 
-print(list(model.named_parameters()))
-# optimizer = Muon(list(model.parameters()))
-# optimizer.zero_grad()
-# optimizer.step()
+model.train()
 
-# prompt = "Give me a short introduction to large language model."
+prompt = "The capital of France is"
+inputs = tokenizer(prompt, return_tensors="pt").to(model.device)
+labels = inputs["input_ids"].clone()
+inputs["labels"] = labels
 
-# inputs = tokenizer(prompt, return_tensors="pt").to(model.device)
-# with torch.no_grad():
-#     outputs = model.generate(
-#         **inputs,
-#         max_new_tokens=50,
-#         do_sample=True,
-#         top_p=0.95,
-#         temperature=0.7
-#     )
+# Passer dans le modèle
+outputs = model(**inputs)
+loss = outputs.loss
 
-# # Résultat
-# print(tokenizer.decode(outputs[0], skip_special_tokens=True))
+print(f"Dummy loss: {loss.item()}")
+
+# Optimiseur custom
+optimizer = MuonPP(list(model.named_parameters()))
+optimizer.zero_grad()
+loss.backward()
+optimizer.step()
