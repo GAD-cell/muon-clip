@@ -65,4 +65,4 @@ pip install git+https://github.com/GAD-cell/muon-clip.git@main
 ## Coming soon
 
 -Currently working on an improved version of newton-shulz orthogonalization based on [Accelerating Newton-Shulz Iteration](https://arxiv.org/pdf/2506.10935v1) paper \
--Multi-gpu support based on [distributed muon]([https://arxiv.org/pdf/2506.10935v1](https://arxiv.org/html/2502.16982v1))
+-Multi-gpu support based on [distributed muon](https://arxiv.org/html/2502.16982v1)
