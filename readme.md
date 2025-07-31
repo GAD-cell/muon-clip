@@ -4,8 +4,8 @@ This repository presents an implementation of the Muon optimizer, enhanced with 
 
 ## Key Features
 
-- **QK-Clipping**: Introduces a mechanism to stabilize training by clipping attention logits.
-- **Esasy to use**: Designed to integrate seamlessly with existing transformer and pytorch architectures. Can be used as a regular pytorch optimizer.
+- **QK-Clipping**: Introduces a mechanism to stabilize training by clipping attention logits for each head.
+- **Esasy to use**: Designed to integrate seamlessly with existing transformer and pytorch architectures. Designed to be used as a regular pytorch optimizer.
 - **Scalability**: Optimized for large-scale training scenarios.
 
 ## QK-Clipping Explained
