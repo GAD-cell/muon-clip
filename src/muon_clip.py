@@ -7,7 +7,7 @@ import wandb
 from typing import Tuple
 from dataclasses import dataclass
 
-from utils_muon import adam_update, muon_update, hook_recorder, repeat_kv
+from utils_muon import adam_update, muon_update, hook_recorder, repeat_kv, override_model
 
 
 @dataclass
@@ -61,7 +61,9 @@ class MuonClip(Optimizer):
 
     def __init__(self, model, model_config, muon_config: MuonConfig):
         self.enable_clipping = muon_config.enable_clipping
-        found_layer = hook_recorder.register_input_hook(model)  # q_proj / k_proj forward hooks
+        #found_layer = hook_recorder.register_input_hook(model)  # q_proj / k_proj forward hooks
+        override_model(model, hook_recorder)
+        found_layer = True
         if not found_layer:
             print("Warning: unable to find q_proj and k_proj layers. No clipping applied.")
             self.enable_clipping = False

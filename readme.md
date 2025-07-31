@@ -45,6 +45,8 @@ muon_config = MuonConfig(
 
 optimizer = MuonClip(model, model_config, muon_config)
 
+model.train() #You must call model.train() after defining the optimizer so that hooks are registered correctly.
+
 ```
 
 ## Demo

@@ -52,6 +52,7 @@ class HookRecorder:
     def __init__(self):
         self.attn_inputs = {}
         self.attn_outputs = {}
+        self.handles = []  # Store hook handles 
 
     def make_proj_input_hook(self, layer_idx, proj_type):
         def hook(module, input, output):
@@ -71,37 +72,48 @@ class HookRecorder:
             if m := re.match(r".*layers\.(\d+)\.self_attn\.(q_proj)$", name):
                 layer_idx = int(m.group(1))
                 proj_type = "q_proj"
-                module.register_forward_hook(self.make_proj_input_hook(layer_idx, proj_type))
-                module.register_forward_hook(self.make_proj_output_hook(layer_idx, proj_type))
+                handle_in = module.register_forward_hook(self.make_proj_input_hook(layer_idx, proj_type))
+                handle_out = module.register_forward_hook(self.make_proj_output_hook(layer_idx, proj_type))
+                self.handles.extend([handle_in, handle_out])
 
             elif m := re.match(r".*layers\.(\d+)\.self_attn\.(k_proj)$", name):
                 layer_idx = int(m.group(1))
                 proj_type = "k_proj"
-                module.register_forward_hook(self.make_proj_output_hook(layer_idx, proj_type))
+                handle_out = module.register_forward_hook(self.make_proj_output_hook(layer_idx, proj_type))
+                self.handles.append(handle_out)
 
                 found_layer = True
+        print(f"Hooked {len(self.handles)//3} layers")
         return found_layer
+
+    def remove_hooks(self):
+        for handle in self.handles:
+            handle.remove()
+        print(f"removed {len(self.handles)} hooks")
+        self.handles.clear()
+        
+
 
 hook_recorder = HookRecorder()
 
+import types
+from torch.nn import Module 
+def override_model(model: Module, hook_recorder):
+    def new_train(self):
+        hook_recorder.register_input_hook(self)
+        original_train()
+        return self
 
-# def make_self_attn_hook(layer_idx, alpha, t):
-#     def hook(module, input, output):
-#         q = attn_outputs.get(layer_idx, {}).get("q")
-#         k = attn_outputs.get(layer_idx, {}).get("k")
-#         q = repeat_kv(q,2) # n_rep = 2 = num_attention_heads // num_key_value_heads
-#         k = repeat_kv(k,2)
-#         if q is not None and k is not None:
-#             attn_logits = torch.matmul(q, k.transpose(-1, -2))
-#             max_logits = attn_logits.max()
+    def new_eval(self):
+        hook_recorder.remove_hooks()
+        original_eval()
+        return self
 
-#             print(f"[Layer {layer_idx}] max(QK^T): {attn_logits.max().item():.4f}")
+    original_train = model.train
+    original_eval = model.eval
 
-#         eta = min(t/max_logits,1)
-#         with torch.no_grad():
-#             module.q_proj.weight.mul_(torch.pow(eta, alpha))
-#             module.k_proj.weight.mul_(torch.pow(eta, 1 - alpha))
+    model.train = types.MethodType(new_train, model)
+    model.eval = types.MethodType(new_eval, model)
 
-#     return hook
-
+    return model
 
