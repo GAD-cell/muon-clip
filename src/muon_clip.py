@@ -27,7 +27,7 @@ class MuonConfig:
 
 
 
-# Base muon implementation is from https://github.com/KellerJordan/Muon
+
 class MuonClip(Optimizer):
     '''
     Hybrid optimizer that combines Muon and Adam optimization strategies with optional input clipping 
