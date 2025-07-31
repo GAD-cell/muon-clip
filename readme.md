@@ -56,7 +56,7 @@ pip install git+https://github.com/GAD-cell/muon-clip.git@main
 
 ## Future implementation
 
--Currently working on an improved version of newton-shulz orthogonalization based on [Accelerating Newton-Shulz Iteration](https://arxiv.org/pdf/2506.10935v1) paper
--Multi-gpu support
--Fix log step during eval
--Add hook registration and removal when executing model.train() and model.eval()
+-Currently working on an improved version of newton-shulz orthogonalization based on [Accelerating Newton-Shulz Iteration](https://arxiv.org/pdf/2506.10935v1) paper \
+-Multi-gpu support \
+-Fix log step during eval \
+-Add hook registration and removal when executing model.train() and model.eval() 
