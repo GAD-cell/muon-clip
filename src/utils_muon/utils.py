@@ -51,12 +51,18 @@ def repeat_kv(hidden_states: torch.Tensor, n_rep: int, num_key_value_heads: int,
 class HookRecorder:
     def __init__(self):
         self.attn_inputs = {}
+        self.attn_outputs = {}
 
     def make_proj_input_hook(self, layer_idx, proj_type):
         def hook(module, input, output):
-            if layer_idx not in self.attn_inputs:
-                self.attn_inputs[layer_idx] = {}
             self.attn_inputs[layer_idx] = input[0]
+        return hook
+
+    def make_proj_output_hook(self, layer_idx, proj_type):
+        def hook(module, input, output):
+            if layer_idx not in self.attn_outputs:
+                self.attn_outputs[layer_idx] = {}
+            self.attn_outputs[layer_idx][proj_type] = output
         return hook
 
     def register_input_hook(self, model):
@@ -64,8 +70,15 @@ class HookRecorder:
         for name, module in model.named_modules():
             if m := re.match(r".*layers\.(\d+)\.self_attn\.(q_proj)$", name):
                 layer_idx = int(m.group(1))
-                proj_type = m.group(2)[0]
+                proj_type = "q_proj"
                 module.register_forward_hook(self.make_proj_input_hook(layer_idx, proj_type))
+                module.register_forward_hook(self.make_proj_output_hook(layer_idx, proj_type))
+
+            elif m := re.match(r".*layers\.(\d+)\.self_attn\.(k_proj)$", name):
+                layer_idx = int(m.group(1))
+                proj_type = "k_proj"
+                module.register_forward_hook(self.make_proj_output_hook(layer_idx, proj_type))
+
                 found_layer = True
         return found_layer
 
