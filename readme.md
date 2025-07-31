@@ -1,6 +1,6 @@
 # Muon Optimizer 2.0
 
-This repository presents an implementation of the Muon optimizer, enhanced with the QK-Clipping technique introduced in Kimi K2.
+This repository presents an implementation of the Muon optimizer, enhanced with the QK-Clipping technique introduced in Kimi K2 and better newton-shulz orthogonalization.
 
 ## Key Features
 
