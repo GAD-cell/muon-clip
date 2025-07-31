@@ -73,7 +73,6 @@ class MuonClip(Optimizer):
         self.model_config = model_config
         self.muon_config = muon_config
         self.n_rep = model_config.num_attention_heads // model_config.num_key_value_heads
-        self._step = 0
 
         muon_group = []
         adam_group = []
@@ -183,7 +182,7 @@ class MuonClip(Optimizer):
                 old_local_max = per_head_max.amax(dim=0).item()
                 global_max = old_local_max if old_local_max > global_max else global_max
             
-            wandb.log({"max_logits": global_max}, step=self._step)
+            wandb.log({"max_logits": global_max}, commit=False)
 
         #QK-clipping
         for key, value in qk_proj_dic.items(): #iterate over layers
@@ -225,7 +224,5 @@ class MuonClip(Optimizer):
             k = k.view(k.size(0),-1) # original size (in_dim,out_dim)
             k = k.transpose(-2,-1)
             k_param.data.copy_(k.clone())        
-
-        self._step += 1
 
         return loss
