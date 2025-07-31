@@ -1,62 +1,107 @@
 import torch
 from torch.optim import Optimizer
 import torch.distributed as dist
-from typing import Tuple
-from utils_muon import adam_update, muon_update, hook_recorder, repeat_kv
+
 import re
 import wandb
+from typing import Tuple
+from dataclasses import dataclass
 
-# Base muon implementation is inspired and from https://github.com/KellerJordan/Muon
+from utils_muon import adam_update, muon_update, hook_recorder, repeat_kv
+
+
+@dataclass
+class MuonConfig:
+    muon_lr: float = 5e-4
+    muon_momentum: float = 0.95
+    muon_decay: float = 0.0
+    
+    enable_clipping: bool = True
+    clipping_threshold: float = 20.0
+    clipping_alpha: float = 0.5
+
+    adam_lr: float = 5e-4
+    adam_betas: Tuple[float, float] = (0.9, 0.95)
+    adam_decay: float = 0.0
+    adam_eps: float = 1e-10
+
+
+
+# Base muon implementation is from https://github.com/KellerJordan/Muon
 class MuonClip(Optimizer):
     '''
-    
+    Hybrid optimizer that combines Muon and Adam optimization strategies with optional input clipping 
+    for specific attention projection layers (q_proj and k_proj).
+
+    This optimizer separates model parameters into two groups:
+    - 2D parameters and q_proj and k_proj layers (optimized using Muon)
+    - All other parameters (optimized using Adam)
+
+    If enabled, an input clipping mechanism is applied to the inputs of q_proj and k_proj layers 
+    based on a configurable threshold.
+
+    Args:
+        model (nn.Module): The model whose parameters are to be optimized.
+        model_config (Any): Configuration object containing model architecture details. Must include:
+            - num_attention_heads (int)
+            - num_key_value_heads (int)
+        muon_config (MuonConfig): Configuration dataclass containing all optimizer and clipping parameters.
+
+    Notes:
+        - Clipping hooks are only applied if q_proj and k_proj layers are found and `enable_clipping` is True.
+        - Only 2D parameters (i.e., weight matrices) are optimized with Muon.
+        - Parameter groups are constructed manually with the `use_muon` flag for later use in the step function.
+
+    References:
+        - Muon optimizer: https://kellerjordan.github.io/posts/muon/
+        - Original implementation: https://github.com/KellerJordan/Muon
+        - Kimi-K2 filtering (clipping idea): https://moonshotai.github.io/Kimi-K2/
     '''
-    def __init__(self, model, config, enable_clipping=True, clipping_threshold=10.0, clipping_alpha=0.5):
-        
-        self.enable_clipping = enable_clipping
-        found_layer = hook_recorder.register_input_hook(model) # add forward hooks for q_proj and k_proj inputs
-        if not found_layer : 
+
+    def __init__(self, model, model_config, muon_config: MuonConfig):
+        self.enable_clipping = muon_config.enable_clipping
+        found_layer = hook_recorder.register_input_hook(model)  # q_proj / k_proj forward hooks
+        if not found_layer:
             print("Warning: unable to find q_proj and k_proj layers. No clipping applied.")
             self.enable_clipping = False
-        
-        self.t = clipping_threshold
-        self.alpha = clipping_alpha
-        self.model_config = config
-        self.n_rep = config.num_attention_heads//config.num_key_value_heads
+
+        self.t = muon_config.clipping_threshold
+        self.alpha = muon_config.clipping_alpha
+        self.model_config = model_config
+        self.muon_config = muon_config
+        self.n_rep = model_config.num_attention_heads // model_config.num_key_value_heads
         self._step = 0
-        #filter Q and K matrix (for clipping) refer to: https://moonshotai.github.io/Kimi-K2/ 
-        #filter non 2D-matrix (muon is a 2D matrix optimizer) : https://kellerjordan.github.io/posts/muon/
-        muon_group = [] 
-        adam_group = []  
-         
-        for name,p in model.named_parameters():
 
-            m = re.search(r"\d+", name)
-            if m and ("q_proj" in name or "k_proj" in name): 
-                layer_idx = (int(m.group(0)), "q_proj" if "q_proj" in name else "k_proj")      
-            else: layer_idx = None
+        muon_group = []
+        adam_group = []
 
-            if len(p.shape) == 2 : 
-                muon_group.append((layer_idx,p))
-            else : 
-                adam_group.append((layer_idx,p))
-        
+        for name, p in model.named_parameters():
+            m = re.search(r"\d+", name) #add layer id for clipping later
+            layer_idx = (int(m.group(0)), "q_proj" if "q_proj" in name else "k_proj") if m and ("q_proj" in name or "k_proj" in name) else None
 
-        muon_config = dict(lr=5e-4, momentum=0.95, weight_decay=0)
-        adam_config = dict(lr=5e-4, betas=(0.9, 0.95), eps=1e-10, weight_decay=0)
-        
-        muon_dic = muon_config.copy()
-        muon_dic.update({
+            if p.ndim == 2:
+                muon_group.append((layer_idx, p))
+            else:
+                adam_group.append((layer_idx, p))
+
+        muon_dic = {
             "params": muon_group,
+            "lr": muon_config.muon_lr,
+            "momentum": muon_config.muon_momentum,
+            "weight_decay": muon_config.muon_decay,
             "use_muon": True
-        })
+        }
 
-        adam_dic = adam_config.copy()
-        adam_dic.update({
+        adam_dic = {
             "params": adam_group,
+            "lr": muon_config.adam_lr,
+            "betas": muon_config.adam_betas,
+            "eps": muon_config.adam_eps,
+            "weight_decay": muon_config.adam_decay,
             "use_muon": False
-        })
-        super().__init__([muon_dic, adam_dic], dict())
+        }
+
+        super().__init__([muon_dic, adam_dic], {})
 
     @torch.no_grad()
     def step(self, closure=None):
@@ -92,7 +137,7 @@ class MuonClip(Optimizer):
                             if not qk_proj_dic.get(index,None): qk_proj_dic[index] = {}
                             x = hook_recorder.attn_inputs[index]
                             proj = torch.matmul(x, p.transpose(-2, -1))
-                            qk_proj_dic[index][proj_type] = {'param':p, 'proj':proj, 'out':output} 
+                            qk_proj_dic[index][proj_type] = {'param':p, 'proj':proj} 
 
 
             else: #Adam
@@ -117,7 +162,7 @@ class MuonClip(Optimizer):
         for key, value in old_proj_dic.items():
             q_out = value["q_proj"]["out"]
             k_out = value["k_proj"]["out"]
-            old_attn_logits = torch.matmul(q_out,k_out.transpose(-2,-1))/(self.model_config.head_dim)**0.5 
+            old_attn_logits = torch.matmul(q_out,k_out.transpose(-2,-1))
             per_head_max = old_attn_logits.amax(dim=(-2, -1)).amax(dim=0) 
             old_local_max = per_head_max.amax(dim=0).item()
             global_max = old_local_max if old_local_max > global_max else global_max
@@ -126,8 +171,8 @@ class MuonClip(Optimizer):
 
         #QK-clipping
         for key, value in qk_proj_dic.items(): #iterate over layers
-            q_param, q_proj, q_out = value["q_proj"]["param"], value["q_proj"]["proj"] 
-            k_param, k_proj, k_out = value["k_proj"]["param"], value["k_proj"]["proj"] 
+            q_param, q_proj = value["q_proj"]["param"], value["q_proj"]["proj"] 
+            k_param, k_proj = value["k_proj"]["param"], value["k_proj"]["proj"] 
 
             q_proj = repeat_kv(
                                 q_proj,
@@ -140,7 +185,7 @@ class MuonClip(Optimizer):
                                 self.model_config.num_key_value_heads,
                                 self.model_config.head_dim)
 
-            attn_logits = torch.matmul(q_proj,k_proj.transpose(-2,-1))/(self.model_config.head_dim)**0.5
+            attn_logits = torch.matmul(q_proj,k_proj.transpose(-2,-1))
             per_head_max = attn_logits.amax(dim=(-2, -1)).amax(dim=0) # 1 max per head 
             per_head_eta = (self.t / per_head_max).clamp(max=1.0)
             per_head_eta = per_head_eta.unsqueeze(0).unsqueeze(-1)

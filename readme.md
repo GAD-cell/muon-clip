@@ -11,6 +11,7 @@ This repository presents an implementation of the Muon optimizer, enhanced with 
 ## QK-Clipping Explained
 
 QK-Clipping is a technique that addresses the issue of exploding attention logits in transformer models. By rescaling the query and key matrices during training, QK-Clipping ensures that the attention scores remain within a stable range, preventing instability and promoting smoother convergence. This method was instrumental in the pre-training of Kimi K2 on 15.5 trillion tokens without any loss spikes.
+The clipping is applied per heads.
 
 For more details, refer to the following resources:
 
