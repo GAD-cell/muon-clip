@@ -95,7 +95,7 @@ class HookRecorder:
     def remove_hooks(self):
         for handle in self.handles:
             handle.remove()
-        print(f"removed {len(self.handles)} hooks")
+        print(f"Removed {len(self.handles)} hooks across {len(self.handles) // 3} layers.")
         self.handles.clear()
         self.is_registered = False
         
@@ -106,18 +106,16 @@ hook_recorder = HookRecorder()
 import types
 from torch.nn import Module 
 def override_model(model: Module, hook_recorder):
-    def new_train(self):
+    original_train = model.train
+    original_eval = model.eval
+
+    def new_train(self, mode: bool = True):
         hook_recorder.register_input_hook(self)
-        original_train()
-        return self
+        return original_train(mode)
 
     def new_eval(self):
         hook_recorder.remove_hooks()
-        original_eval()
-        return self
-
-    original_train = model.train
-    original_eval = model.eval
+        return original_train(False)  # PyTorch eval() is implemented as train(False)
 
     model.train = types.MethodType(new_train, model)
     model.eval = types.MethodType(new_eval, model)

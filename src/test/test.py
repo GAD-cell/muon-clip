@@ -4,7 +4,7 @@ import os
 import sys
 import re
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
-from muon_pp import MuonPP
+from muon_clip import MuonClip, MuonConfig
 
 model_name = "Qwen/Qwen3-0.6B"  
 tokenizer = AutoTokenizer.from_pretrained(model_name)
@@ -15,7 +15,8 @@ model = AutoModelForCausalLM.from_pretrained(
     torch_dtype=torch.bfloat16,
     cache_dir="./model_cache"
 )
-optimizer = MuonPP(model, config)
+muonconfig = MuonConfig()
+optimizer = MuonClip(model, config, muonconfig)
 
 model.train()
 prompt = "The capital of France is"
@@ -33,3 +34,6 @@ print(f"Dummy loss: {loss.item()}")
 optimizer.zero_grad()
 loss.backward()
 optimizer.step()
+
+
+model.eval()
