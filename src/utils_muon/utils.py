@@ -53,7 +53,9 @@ class HookRecorder:
         self.attn_inputs = {}
         self.attn_outputs = {}
         self.handles = []  # Store hook handles 
-
+        self.is_registered = False
+        self.found_layer = False
+        
     def make_proj_input_hook(self, layer_idx, proj_type):
         def hook(module, input, output):
             self.attn_inputs[layer_idx] = input[0]
@@ -67,7 +69,9 @@ class HookRecorder:
         return hook
 
     def register_input_hook(self, model):
-        found_layer = False
+
+        if self.is_registered : return
+
         for name, module in model.named_modules():
             if m := re.match(r".*layers\.(\d+)\.self_attn\.(q_proj)$", name):
                 layer_idx = int(m.group(1))
@@ -82,15 +86,18 @@ class HookRecorder:
                 handle_out = module.register_forward_hook(self.make_proj_output_hook(layer_idx, proj_type))
                 self.handles.append(handle_out)
 
-                found_layer = True
+                self.found_layer = True
         print(f"Hooked {len(self.handles)//3} layers")
-        return found_layer
+        self.is_registered = True
+
+        return 
 
     def remove_hooks(self):
         for handle in self.handles:
             handle.remove()
         print(f"removed {len(self.handles)} hooks")
         self.handles.clear()
+        self.is_registered = False
         
 
 
