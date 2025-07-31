@@ -45,6 +45,7 @@ class MuonClip(Optimizer):
         model_config (Any): Configuration object containing model architecture details. Must include:
             - num_attention_heads (int)
             - num_key_value_heads (int)
+            - head_dim (int)
         muon_config (MuonConfig): Configuration dataclass containing all optimizer and clipping parameters.
 
     Notes:

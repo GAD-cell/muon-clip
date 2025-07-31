@@ -5,7 +5,7 @@ This repository presents an implementation of the Muon optimizer, enhanced with 
 ## Key Features
 
 - **QK-Clipping**: Introduces a mechanism to stabilize training by clipping attention logits.
-- **Esasy to use**: Designed to integrate seamlessly with existing transformer and pytorch architectures.
+- **Esasy to use**: Designed to integrate seamlessly with existing transformer and pytorch architectures. Can be used as a regular pytorch optimizer.
 - **Scalability**: Optimized for large-scale training scenarios.
 
 ## QK-Clipping Explained
@@ -19,9 +19,31 @@ For more details, refer to the following resources:
 
 ## How to use
 
-Here's a basic example of how to use the MuonClip optimizer:
+Here's a basic example:
 
 ```python
+from muon_clip import MuonClip, MuonConfig
+from transformers import AutoConfig
+
+# model config can also be a dic with at least num_key_value_heads,num_attention_heads and head_dim keys
+model_config = AutoConfig.from_pretrained("{hf_model}")
+
+muon_config = MuonConfig(
+    muon_lr=5e-4,
+    muon_momentum=0.95,
+    muon_decay=0.0,
+    
+    enable_clipping=True,
+    clipping_threshold=20.0,
+    clipping_alpha=0.5,
+
+    adam_lr=5e-4,
+    adam_betas=(0.9, 0.95),
+    adam_decay=0.0,
+    adam_eps=1e-10
+)
+
+optimizer = MuonClip(model, model_config, muon_config)
 
 ```
 ## Installation
@@ -36,3 +58,5 @@ pip install git+https://github.com/GAD-cell/muon-clip.git@main
 
 -Currently working on an improved version of newton-shulz orthogonalization based on [Accelerating Newton-Shulz Iteration](https://arxiv.org/pdf/2506.10935v1) paper
 -Multi-gpu support
+-Fix log step during eval
+-Add hook registration and removal when executing model.train() and model.eval()
