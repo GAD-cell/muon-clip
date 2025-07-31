@@ -46,6 +46,11 @@ muon_config = MuonConfig(
 optimizer = MuonClip(model, model_config, muon_config)
 
 ```
+
+## Demo
+Below a training test with and without clipping.
+Notice how the logits are clipped when reaching clipping_threshold.
+![Training max_logits](images/W&B Chart 31_07_2025 19_34_32.png)
 ## Installation
 
 To install the Muon optimizer with QK-Clipping just use:
