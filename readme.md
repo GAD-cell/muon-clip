@@ -56,7 +56,7 @@ Notice how the logits are clipped when reaching clipping_threshold.
 
 ## Installation
 
-To install the Muon optimizer with QK-Clipping just use:
+To install muon-clip just use:
 
 ```bash
 pip install git+https://github.com/GAD-cell/muon-clip.git@main
