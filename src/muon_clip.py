@@ -108,8 +108,9 @@ class MuonClip(Optimizer):
     def step(self, closure=None):
         """
         Performs a single optimization step.
-        If Muon is enabled, it applies Muon updates to 2D parameters and q_proj/k_proj layers.
+        If Muon, it applies Muon updates to 2D parameters and q_proj/k_proj layers.
         Otherwise, it applies Adam updates to all parameters.
+        Check if distributed training is initialized and use the appropriate step function.
         """
         if dist.is_initialized() and dist.get_world_size() > 1:
             return self.dist_muon_step(closure)
