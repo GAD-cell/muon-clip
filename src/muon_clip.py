@@ -105,8 +105,19 @@ class MuonClip(Optimizer):
 
         super().__init__([muon_dic, adam_dic], {})
 
-    @torch.no_grad()
     def step(self, closure=None):
+        """
+        Performs a single optimization step.
+        If Muon is enabled, it applies Muon updates to 2D parameters and q_proj/k_proj layers.
+        Otherwise, it applies Adam updates to all parameters.
+        """
+        if dist.is_initialized() and dist.get_world_size() > 1:
+            return self.dist_muon_step(closure)
+
+        return self.single_muon_step(closure)
+
+    @torch.no_grad()
+    def single_muon_step(self, closure=None):
         loss = None
         if closure is not None:
             with torch.enable_grad():
@@ -206,7 +217,7 @@ class MuonClip(Optimizer):
             per_head_eta = per_head_eta.unsqueeze(0).unsqueeze(-1)
             
             #separate query params heads and scale by eta per head
-            q = q_param.data.transpose(-2,-1) #if transpose else q_param.data
+            q = q_param.data.transpose(-2,-1) 
             q = q.data.view(q.size(0), -1, self.model_config.head_dim) # [in_dim,out_dim] -> [in_dim,num_head,head_dim]
             q *= per_head_eta**self.alpha
             q = q.view(q.size(0),-1) # original size (in_dim,out_dim)
@@ -226,3 +237,11 @@ class MuonClip(Optimizer):
             k_param.data.copy_(k.clone())        
 
         return loss
+
+    @torch.no_grad()
+    def dist_muon_step(self, closure=None):
+        """
+        Distributed Muon step for multi-GPU training.
+        This function is a placeholder for future implementation.
+        """
+        raise NotImplementedError("Distributed Muon step is not implemented yet.")
