@@ -9,6 +9,10 @@ from dataclasses import dataclass
 
 from utils_muon import adam_update, muon_update, hook_recorder, repeat_kv, override_model
 
+import os
+
+def is_deepspeed():
+    return 'LOCAL_RANK' in os.environ and 'RANK' in os.environ and 'WORLD_SIZE' in os.environ
 
 @dataclass
 class MuonConfig:
@@ -112,7 +116,7 @@ class MuonClip(Optimizer):
         Otherwise, it applies Adam updates to all parameters.
         Check if distributed training is initialized and use the appropriate step function.
         """
-        if dist.is_initialized() and dist.get_world_size() > 1:
+        if is_deepspeed():
             return self.dist_muon_step(closure)
 
         return self.single_muon_step(closure)
@@ -146,7 +150,7 @@ class MuonClip(Optimizer):
                         if not old_proj_dic.get(index,None): old_proj_dic[index] = {}
                         output = hook_recorder.attn_outputs[index][proj_type]
                         old_proj_dic[index][proj_type] = {'out':output}
-
+                        
                         if self.enable_clipping:
                             if not qk_proj_dic.get(index,None): qk_proj_dic[index] = {}
                             x = hook_recorder.attn_inputs[index]
@@ -292,13 +296,16 @@ class MuonClip(Optimizer):
                             index = param_names[0]
                             proj_type = param_names[1]
                             if not old_proj_dic.get(index,None): old_proj_dic[index] = {}
+                            if index not in hook_recorder.attn_outputs:
+                            # Ne pas exécuter cette étape muon — on est sans doute dans le warmup init de DeepSpeed
+                                continue
                             output = hook_recorder.attn_outputs[index][proj_type]
                             old_proj_dic[index][proj_type] = {'out':output}
 
                             if self.enable_clipping:
                                 if not qk_proj_dic.get(index,None): qk_proj_dic[index] = {}
                                 x = hook_recorder.attn_inputs[index]
-                                proj = torch.matmul(x, p.transpose(-2, -1)) # W*X : projection of input x
+                                proj = torch.matmul(x, p.to(dtype=x.dtype).transpose(-2, -1)) # W*X : projection of input x
                                 qk_proj_dic[index][proj_type] = {'param':p, 'proj':proj} # dic structure : {0 : {'q_proj': {'param': p, 'proj': proj}, 'k_proj': {'param': p, 'proj': proj}}}
 
                     dist.all_gather(params_pad[base_i:base_i + dist.get_world_size()], params_pad[base_i + dist.get_rank()])
