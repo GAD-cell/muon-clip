@@ -20,7 +20,9 @@ model = AutoModelForCausalLM.from_pretrained(
 )
 
 
-muon_config = MuonConfig()
+muon_config = MuonConfig(
+  enable_clipping = False
+)
 optimizer = MuonClip(model, config, muon_config)
 
 
@@ -57,5 +59,5 @@ loss = outputs.loss
 loss.backward()
 optimizer.step()
 
-
-print(f"[Rank {model.local_rank}] Loss: {loss.item()}")
+if model.local_rank==0:
+  print(f"[Rank {model.local_rank}] Loss: {loss.item()}")

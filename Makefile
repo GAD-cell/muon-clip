@@ -5,7 +5,7 @@ VENV  := .venv
 TEST_SCRIPT := src/test/test.py
 TEST_DIST_SCRIPT := src/test/test_dist.py
 
-NUM_GPUS ?= 2
+NUM_GPUS ?= 3
 
 
 .PHONY: env test test-dist

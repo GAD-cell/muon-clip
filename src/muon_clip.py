@@ -275,8 +275,8 @@ class MuonClip(Optimizer):
                             k_dict[index] = p
 
                 sorted_indices = sorted(set(q_dict.keys()) & set(k_dict.keys()))
-                q_list = [q_dict[i] for i in sorted_indices]
-                k_list = [k_dict[i] for i in sorted_indices]
+                q_list = [q_dict[i] for i in sorted_indices] + [torch.empty_like(q_dict[0])] * (dist.get_world_size() - len(params) % dist.get_world_size()) 
+                k_list = [k_dict[i] for i in sorted_indices] + [torch.empty_like(k_dict[0])] * (dist.get_world_size() - len(params) % dist.get_world_size()) 
 
                 for base_i in range(len(params))[::dist.get_world_size()]:
                     if base_i + dist.get_rank() < len(params):
@@ -289,26 +289,27 @@ class MuonClip(Optimizer):
                         update = muon_update(p.grad, state["momentum_buffer"], beta=group["momentum"])
                         p.mul_(1 - group["lr"] * group["weight_decay"])
                         p.add_(update.reshape(p.shape), alpha=-group["lr"])
-
-                        #save proj 
-                        param_names = group["param_names"][base_i + dist.get_rank()] # ok because  base_i + dist.get_rank() < len(params)
-                        if param_names :
-                            index = param_names[0]
-                            proj_type = param_names[1]
-                            if not old_proj_dic.get(index,None): old_proj_dic[index] = {}
-                            if index not in hook_recorder.attn_outputs:
-                            # Ne pas exécuter cette étape muon — on est sans doute dans le warmup init de DeepSpeed
-                                continue
-                            output = hook_recorder.attn_outputs[index][proj_type]
-                            old_proj_dic[index][proj_type] = {'out':output}
-
-                            if self.enable_clipping:
-                                if not qk_proj_dic.get(index,None): qk_proj_dic[index] = {}
-                                x = hook_recorder.attn_inputs[index]
-                                proj = torch.matmul(x, p.to(dtype=x.dtype).transpose(-2, -1)) # W*X : projection of input x
-                                qk_proj_dic[index][proj_type] = {'param':p, 'proj':proj} # dic structure : {0 : {'q_proj': {'param': p, 'proj': proj}, 'k_proj': {'param': p, 'proj': proj}}}
-
                     dist.all_gather(params_pad[base_i:base_i + dist.get_world_size()], params_pad[base_i + dist.get_rank()])
+                
+                for i,p in enumerate(params):
+                    #save proj 
+                    param_names = group["param_names"][i] 
+                    if param_names :
+                        index = param_names[0]
+                        proj_type = param_names[1]
+                        if not old_proj_dic.get(index,None): old_proj_dic[index] = {}
+                        if index not in hook_recorder.attn_outputs:
+                        # Ne pas exécuter cette étape muon — on est sans doute dans le warmup init de DeepSpeed
+                            continue
+                        output = hook_recorder.attn_outputs[index][proj_type]
+                        old_proj_dic[index][proj_type] = {'out':output}
+
+                        if self.enable_clipping:
+                            if not qk_proj_dic.get(index,None): qk_proj_dic[index] = {}
+                            x = hook_recorder.attn_inputs[index]
+                            proj = torch.matmul(x, p.to(dtype=x.dtype).transpose(-2, -1)) # W*X : projection of input x
+                            qk_proj_dic[index][proj_type] = {'param':p, 'proj':proj} # dic structure : {0 : {'q_proj': {'param': p, 'proj': proj}, 'k_proj': {'param': p, 'proj': proj}}}
+
             else:
                 for p in group["params"]:
                     if p.grad is None:
@@ -326,47 +327,49 @@ class MuonClip(Optimizer):
 
 
         #QK-clipping
-        for base_i, (key, value) in enumerate(qk_proj_dic.items()): #iterate over layers
-            q_param, q_proj = value["q_proj"]["param"], value["q_proj"]["proj"] 
-            k_param, k_proj = value["k_proj"]["param"], value["k_proj"]["proj"] 
+        for base_i in range(len(qk_proj_dic.items()))[::dist.get_world_size()]:
+            if base_i + dist.get_rank() < len(q_dict.items()):
+                value = qk_proj_dic[base_i]
+                q_param, q_proj = value["q_proj"]["param"], value["q_proj"]["proj"] 
+                k_param, k_proj = value["k_proj"]["param"], value["k_proj"]["proj"] 
 
-            q_proj = repeat_kv(
-                                q_proj,
-                                self.n_rep,
-                                self.model_config.num_key_value_heads,
-                                self.model_config.head_dim)
-            k_proj = repeat_kv(
-                                k_proj,
-                                self.n_rep,
-                                self.model_config.num_key_value_heads,
-                                self.model_config.head_dim)
+                q_proj = repeat_kv(
+                                    q_proj,
+                                    self.n_rep,
+                                    self.model_config.num_key_value_heads,
+                                    self.model_config.head_dim)
+                k_proj = repeat_kv(
+                                    k_proj,
+                                    self.n_rep,
+                                    self.model_config.num_key_value_heads,
+                                    self.model_config.head_dim)
 
-            attn_logits = torch.matmul(q_proj,k_proj.transpose(-2,-1))
-            per_head_max = attn_logits.amax(dim=(-2, -1)).amax(dim=0) # 1 max per head 
-            per_head_eta = (self.t / per_head_max).clamp(max=1.0)
-            per_head_eta = per_head_eta.unsqueeze(0).unsqueeze(-1)
-            
-            #separate query params heads and scale by eta per head
-            q = q_param.data.transpose(-2,-1) 
-            q = q.data.view(q.size(0), -1, self.model_config.head_dim) # [in_dim,out_dim] -> [in_dim,num_head,head_dim]
-            q *= per_head_eta**self.alpha
-            q = q.view(q.size(0),-1) # original size (in_dim,out_dim)
-            q = q.transpose(-2,-1)
-            q_param.data.copy_(q.clone())
-            
-            #separate key params heads, scale eta per head and take into account kv cache
-            #For handling key heads, we take the minimum eta value within each KV head group, 
-            #applying the strongest (smallest) rescaling factor to ensure stability in the worst-case scenario.    
-            k = k_param.data.transpose(-2,-1) 
-            k = k.data.view(k.size(0), -1, self.model_config.head_dim)
-            per_key_head_eta = per_head_eta.view(per_head_eta.size(0), k.size(1), -1).min(dim=2).values #notice min for each group
-            per_key_head_eta = per_key_head_eta.unsqueeze(-1)
-            k *= per_key_head_eta**(1-self.alpha)
-            k = k.view(k.size(0),-1) # original size (in_dim,out_dim)
-            k = k.transpose(-2,-1)
-            k_param.data.copy_(k.clone())     
+                attn_logits = torch.matmul(q_proj,k_proj.transpose(-2,-1))
+                per_head_max = attn_logits.amax(dim=(-2, -1)).amax(dim=0) # 1 max per head 
+                per_head_eta = (self.t / per_head_max).clamp(max=1.0)
+                per_head_eta = per_head_eta.unsqueeze(0).unsqueeze(-1)
+                
+                #separate query params heads and scale by eta per head
+                q = q_param.data.transpose(-2,-1) 
+                q = q.data.view(q.size(0), -1, self.model_config.head_dim) # [in_dim,out_dim] -> [in_dim,num_head,head_dim]
+                q *= per_head_eta**self.alpha
+                q = q.view(q.size(0),-1) # original size (in_dim,out_dim)
+                q = q.transpose(-2,-1)
+                q_param.data.copy_(q.clone())
+                
+                #separate key params heads, scale eta per head and take into account kv cache
+                #For handling key heads, we take the minimum eta value within each KV head group, 
+                #applying the strongest (smallest) rescaling factor to ensure stability in the worst-case scenario.    
+                k = k_param.data.transpose(-2,-1) 
+                k = k.data.view(k.size(0), -1, self.model_config.head_dim)
+                per_key_head_eta = per_head_eta.view(per_head_eta.size(0), k.size(1), -1).min(dim=2).values #notice min for each group
+                per_key_head_eta = per_key_head_eta.unsqueeze(-1)
+                k *= per_key_head_eta**(1-self.alpha)
+                k = k.view(k.size(0),-1) # original size (in_dim,out_dim)
+                k = k.transpose(-2,-1)
+                k_param.data.copy_(k.clone())     
 
-            dist.all_gather(q_list[base_i*dist.get_world_size():(base_i+1)*dist.get_world_size()], q_param) #q_gather
-            dist.all_gather(k_list[base_i*dist.get_world_size():(base_i+1)*dist.get_world_size()], k_param) #k_gather
+            dist.all_gather(q_list[base_i:base_i+dist.get_world_size()], q_list[base_i + dist.get_rank()]) #q_gather
+            dist.all_gather(k_list[base_i:base_i+dist.get_world_size()], k_list[base_i + dist.get_rank()]) #k_gather
 
         return loss       
