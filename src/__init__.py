@@ -1,3 +1,3 @@
-from .muon_pp import MuonPP
+from .muon_clip import MuonClip
 
-__all__ = ["MuonPP"]
+__all__ = ["MuonClip"]
