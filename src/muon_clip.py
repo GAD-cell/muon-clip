@@ -243,7 +243,7 @@ class MuonClip(Optimizer):
 
         return loss
 
-@torch.no_grad()
+    @torch.no_grad()
     def dist_muon_step(self, closure=None):
         """
         Distributed Muon step for multi-GPU training.
