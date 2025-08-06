@@ -77,7 +77,7 @@ class MuonClip(Optimizer):
         self.model_config = model_config
         self.muon_config = muon_config
         self.n_rep = model_config.num_attention_heads // model_config.num_key_value_heads
-        self.zero_stage == 0 # Zero stage for distributed training
+        self.zero_stage = 0 # Zero stage for distributed training
 
         muon_group = []
         adam_group = []
@@ -122,7 +122,7 @@ class MuonClip(Optimizer):
             update = muon_update(p.grad, state["momentum_buffer"], beta=group["momentum"])
             p.mul_(1 - group["lr"] * group["weight_decay"])
             p.add_(update.reshape(p.shape), alpha=-group["lr"])
-        dist.broadcast(p.data, src=idx % world_size)
+        dist.broadcast(p.data, src=idx % world_size, async_op=True)
 
     def _stage_one_muon_update(self,p:torch.Tensor, group:dict, idx:int, world_size:int, rank:int) -> None:
         '''
