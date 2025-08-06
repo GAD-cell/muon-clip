@@ -243,7 +243,7 @@ class MuonClip(Optimizer):
 
         return loss
 
-    @torch.no_grad()
+@torch.no_grad()
     def dist_muon_step(self, closure=None):
         """
         Distributed Muon step for multi-GPU training.
@@ -253,123 +253,134 @@ class MuonClip(Optimizer):
             with torch.enable_grad():
                 loss = closure()
 
+        world_size = dist.get_world_size()
+        rank = dist.get_rank()
+
         for group in self.param_groups:
             if group["use_muon"]:
                 params = group["params"]
-                params_pad = params + [torch.empty_like(params[-1])] * (dist.get_world_size() - len(params) % dist.get_world_size())     
-                qk_proj_dic = {}
-                old_proj_dic = {}
-
-
-                # get k_proj and q_proj list for qk distributed clipping
-                q_dict = {}
-                k_dict = {}
-
-                for idx, p in enumerate(params):
-                    param_names = group["param_names"][idx]
-                    if param_names:
-                        index, proj_type = param_names
-                        if proj_type == "q_proj":
-                            q_dict[index] = p
-                        elif proj_type == "k_proj":
-                            k_dict[index] = p
-
-                sorted_indices = sorted(set(q_dict.keys()) & set(k_dict.keys()))
-                q_list = [q_dict[i] for i in sorted_indices] + [torch.empty_like(q_dict[0])] * (dist.get_world_size() - len(params) % dist.get_world_size()) 
-                k_list = [k_dict[i] for i in sorted_indices] + [torch.empty_like(k_dict[0])] * (dist.get_world_size() - len(params) % dist.get_world_size()) 
-
-                for base_i in range(len(params))[::dist.get_world_size()]:
-                    if base_i + dist.get_rank() < len(params):
-                        p = params[base_i + dist.get_rank()]
-                        if p.grad is None:
-                            p.grad = torch.zeros_like(p)  # Force synchronization
+                param_names = group["param_names"]
+                
+                # Process parameters in distributed manner
+                for i, p in enumerate(params):
+                    if p.grad is None:
+                        p.grad = torch.zeros_like(p)
+                    
+                    # Only process parameters assigned to this rank
+                    if i % world_size == rank:
                         state = self.state[p]
                         if len(state) == 0:
                             state["momentum_buffer"] = torch.zeros_like(p)
                         update = muon_update(p.grad, state["momentum_buffer"], beta=group["momentum"])
                         p.mul_(1 - group["lr"] * group["weight_decay"])
                         p.add_(update.reshape(p.shape), alpha=-group["lr"])
-                    dist.all_gather(params_pad[base_i:base_i + dist.get_world_size()], params_pad[base_i + dist.get_rank()])
                 
-                for i,p in enumerate(params):
-                    #save proj 
-                    param_names = group["param_names"][i] 
-                    if param_names :
-                        index = param_names[0]
-                        proj_type = param_names[1]
-                        if not old_proj_dic.get(index,None): old_proj_dic[index] = {}
-                        if index not in hook_recorder.attn_outputs:
-                        # Ne pas exécuter cette étape muon — on est sans doute dans le warmup init de DeepSpeed
-                            continue
-                        output = hook_recorder.attn_outputs[index][proj_type]
-                        old_proj_dic[index][proj_type] = {'out':output}
-
-                        if self.enable_clipping:
-                            if not qk_proj_dic.get(index,None): qk_proj_dic[index] = {}
+                # Synchronize all parameters across ranks
+                for i, p in enumerate(params):
+                    dist.broadcast(p.data, src=i % world_size)
+                
+                # Handle QK clipping 
+                if self.enable_clipping:
+                    qk_proj_dic = {}
+                    
+                    
+                    for i, p in enumerate(params):
+                        param_name = param_names[i]
+                        if param_name:
+                            index, proj_type = param_name
+                            
+                            # Skip if hook data not available specially when deepspeed is initialized
+                            if index not in hook_recorder.attn_outputs:
+                                continue
+                                
+                            if index not in qk_proj_dic:
+                                qk_proj_dic[index] = {}
+                            
                             x = hook_recorder.attn_inputs[index]
-                            proj = torch.matmul(x, p.to(dtype=x.dtype).transpose(-2, -1)) # W*X : projection of input x
-                            qk_proj_dic[index][proj_type] = {'param':p, 'proj':proj} # dic structure : {0 : {'q_proj': {'param': p, 'proj': proj}, 'k_proj': {'param': p, 'proj': proj}}}
+                            proj = torch.matmul(x, p.to(dtype=x.dtype).transpose(-2, -1))
+                            qk_proj_dic[index][proj_type] = {'param': p, 'proj': proj}
+                    
+                    self._apply_distributed_qk_clipping(qk_proj_dic)
 
-            else:
-                for p in group["params"]:
+            else:  # Adam parameters
+                params = group["params"]
+                for i, p in enumerate(params):
                     if p.grad is None:
-                        p.grad = torch.zeros_like(p)  # Force synchronization
-                    state = self.state[p]
-                    if len(state) == 0:
-                        state["exp_avg"] = torch.zeros_like(p)
-                        state["exp_avg_sq"] = torch.zeros_like(p)
-                        state["step"] = 0
-                    state["step"] += 1
-                    update = adam_update(p.grad, state["exp_avg"], state["exp_avg_sq"],
-                                         state["step"], group["betas"], group["eps"])
-                    p.mul_(1 - group["lr"] * group["weight_decay"])
-                    p.add_(update, alpha=-group["lr"])
-
-
-        #QK-clipping
-        for base_i in range(len(qk_proj_dic.items()))[::dist.get_world_size()]:
-            if base_i + dist.get_rank() < len(q_dict.items()):
-                value = qk_proj_dic[base_i]
-                q_param, q_proj = value["q_proj"]["param"], value["q_proj"]["proj"] 
-                k_param, k_proj = value["k_proj"]["param"], value["k_proj"]["proj"] 
-
-                q_proj = repeat_kv(
-                                    q_proj,
-                                    self.n_rep,
-                                    self.model_config.num_key_value_heads,
-                                    self.model_config.head_dim)
-                k_proj = repeat_kv(
-                                    k_proj,
-                                    self.n_rep,
-                                    self.model_config.num_key_value_heads,
-                                    self.model_config.head_dim)
-
-                attn_logits = torch.matmul(q_proj,k_proj.transpose(-2,-1))
-                per_head_max = attn_logits.amax(dim=(-2, -1)).amax(dim=0) # 1 max per head 
-                per_head_eta = (self.t / per_head_max).clamp(max=1.0)
-                per_head_eta = per_head_eta.unsqueeze(0).unsqueeze(-1)
+                        p.grad = torch.zeros_like(p)
+                    
+                    # Only process parameters assigned to this rank
+                    if i % world_size == rank:
+                        state = self.state[p]
+                        if len(state) == 0:
+                            state["exp_avg"] = torch.zeros_like(p)
+                            state["exp_avg_sq"] = torch.zeros_like(p)
+                            state["step"] = 0
+                        state["step"] += 1
+                        update = adam_update(p.grad, state["exp_avg"], state["exp_avg_sq"],
+                                           state["step"], group["betas"], group["eps"])
+                        p.mul_(1 - group["lr"] * group["weight_decay"])
+                        p.add_(update, alpha=-group["lr"])
                 
-                #separate query params heads and scale by eta per head
-                q = q_param.data.transpose(-2,-1) 
-                q = q.data.view(q.size(0), -1, self.model_config.head_dim) # [in_dim,out_dim] -> [in_dim,num_head,head_dim]
-                q *= per_head_eta**self.alpha
-                q = q.view(q.size(0),-1) # original size (in_dim,out_dim)
-                q = q.transpose(-2,-1)
-                q_param.data.copy_(q.clone())
+                # Synchronize all parameters across ranks
+                for i, p in enumerate(params):
+                    dist.broadcast(p.data, src=i % world_size)
+
+        return loss
+
+    def _apply_distributed_qk_clipping(self, qk_proj_dic):
+        """Apply QK clipping in a distributed manner"""
+        world_size = dist.get_world_size()
+        rank = dist.get_rank()
+        
+        layer_indices = list(qk_proj_dic.keys())
+        
+        for i, layer_idx in enumerate(layer_indices):
+            # Only process layers assigned to this rank
+            if i % world_size != rank:
+                continue
                 
-                #separate key params heads, scale eta per head and take into account kv cache
-                #For handling key heads, we take the minimum eta value within each KV head group, 
-                #applying the strongest (smallest) rescaling factor to ensure stability in the worst-case scenario.    
-                k = k_param.data.transpose(-2,-1) 
-                k = k.data.view(k.size(0), -1, self.model_config.head_dim)
-                per_key_head_eta = per_head_eta.view(per_head_eta.size(0), k.size(1), -1).min(dim=2).values #notice min for each group
-                per_key_head_eta = per_key_head_eta.unsqueeze(-1)
-                k *= per_key_head_eta**(1-self.alpha)
-                k = k.view(k.size(0),-1) # original size (in_dim,out_dim)
-                k = k.transpose(-2,-1)
-                k_param.data.copy_(k.clone())     
+            value = qk_proj_dic[layer_idx]
+            if "q_proj" not in value or "k_proj" not in value:
+                print(f"Skipping layer {layer_idx} as it does not have q_proj or k_proj.")
+                continue
+                
+            q_param, q_proj = value["q_proj"]["param"], value["q_proj"]["proj"] 
+            k_param, k_proj = value["k_proj"]["param"], value["k_proj"]["proj"] 
 
-            dist.all_gather(q_list[base_i:base_i+dist.get_world_size()], q_list[base_i + dist.get_rank()]) #q_gather
-            dist.all_gather(k_list[base_i:base_i+dist.get_world_size()], k_list[base_i + dist.get_rank()]) #k_gather
+            q_proj = repeat_kv(q_proj, self.n_rep, self.model_config.num_key_value_heads, self.model_config.head_dim)
+            k_proj = repeat_kv(k_proj, self.n_rep, self.model_config.num_key_value_heads, self.model_config.head_dim)
 
-        return loss       
+            attn_logits = torch.matmul(q_proj, k_proj.transpose(-2, -1))
+            per_head_max = attn_logits.amax(dim=(-2, -1)).amax(dim=0)
+            per_head_eta = (self.t / per_head_max).clamp(max=1.0)
+            per_head_eta = per_head_eta.unsqueeze(0).unsqueeze(-1)
+            
+
+            q = q_param.data.transpose(-2, -1) 
+            q = q.data.view(q.size(0), -1, self.model_config.head_dim)
+            q *= per_head_eta**self.alpha
+            q = q.view(q.size(0), -1)
+            q = q.transpose(-2, -1)
+            q_param.data.copy_(q.clone())
+            
+
+            k = k_param.data.transpose(-2, -1) 
+            k = k.data.view(k.size(0), -1, self.model_config.head_dim)
+            per_key_head_eta = per_head_eta.view(per_head_eta.size(0), k.size(1), -1).min(dim=2).values
+            per_key_head_eta = per_key_head_eta.unsqueeze(-1)
+            k *= per_key_head_eta**(1-self.alpha)
+            k = k.view(k.size(0), -1)
+            k = k.transpose(-2, -1)
+            k_param.data.copy_(k.clone())
+        
+        # Synchronize clipped parameters across all ranks
+        for layer_idx in layer_indices:
+            if layer_idx not in qk_proj_dic:
+                continue
+            value = qk_proj_dic[layer_idx]
+            if "q_proj" in value:
+                src_rank = layer_indices.index(layer_idx) % world_size
+                dist.broadcast(value["q_proj"]["param"].data, src=src_rank)
+            if "k_proj" in value:
+                src_rank = layer_indices.index(layer_idx) % world_size
+                dist.broadcast(value["k_proj"]["param"].data, src=src_rank)
