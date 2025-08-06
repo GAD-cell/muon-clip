@@ -77,6 +77,7 @@ class MuonClip(Optimizer):
         self.model_config = model_config
         self.muon_config = muon_config
         self.n_rep = model_config.num_attention_heads // model_config.num_key_value_heads
+        self.zero_stage == 0 # Zero stage for distributed training
 
         muon_group = []
         adam_group = []
@@ -108,6 +109,31 @@ class MuonClip(Optimizer):
         }
 
         super().__init__([muon_dic, adam_dic], {})
+
+    def _stage_zero_muon_update(self,p:torch.Tensor, group:dict, idx:int, world_size:int, rank:int)-> None:
+        if p.grad is None:
+            p.grad = torch.zeros_like(p)
+                    
+        # Only process parameters assigned to this rank
+        if idx % world_size == rank:
+            state = self.state[p]
+            if len(state) == 0:
+                state["momentum_buffer"] = torch.zeros_like(p)
+            update = muon_update(p.grad, state["momentum_buffer"], beta=group["momentum"])
+            p.mul_(1 - group["lr"] * group["weight_decay"])
+            p.add_(update.reshape(p.shape), alpha=-group["lr"])
+        dist.broadcast(p.data, src=idx % world_size)
+
+    def _stage_one_muon_update(self,p:torch.Tensor, group:dict, idx:int, world_size:int, rank:int) -> None:
+        '''
+        Stage one Muon update for distributed training.
+        Steps: 
+        1.reduce_scatter a tensor
+        2.update momentum
+        3. gather param in rank idx %world_size
+        4.
+        '''
+        
 
     def step(self, closure=None):
         """
@@ -262,27 +288,16 @@ class MuonClip(Optimizer):
                 param_names = group["param_names"]
                 
                 # Process parameters in distributed manner
-                for i, p in enumerate(params):
-                    if p.grad is None:
-                        p.grad = torch.zeros_like(p)
+                for idx, p in enumerate(params):
+                    if self.zero_stage == 0:
+                        self._stage_zero_muon_update(p, group, idx, world_size, rank)
+                    else:
+                        self._stage_one_muon_update(p, group, idx, world_size, rank)
                     
-                    # Only process parameters assigned to this rank
-                    if i % world_size == rank:
-                        state = self.state[p]
-                        if len(state) == 0:
-                            state["momentum_buffer"] = torch.zeros_like(p)
-                        update = muon_update(p.grad, state["momentum_buffer"], beta=group["momentum"])
-                        p.mul_(1 - group["lr"] * group["weight_decay"])
-                        p.add_(update.reshape(p.shape), alpha=-group["lr"])
-                
-                # Synchronize all parameters across ranks
-                for i, p in enumerate(params):
-                    dist.broadcast(p.data, src=i % world_size)
                 
                 # Handle QK clipping 
                 if self.enable_clipping:
                     qk_proj_dic = {}
-                    
                     
                     for i, p in enumerate(params):
                         param_name = param_names[i]
@@ -384,3 +399,4 @@ class MuonClip(Optimizer):
             if "k_proj" in value:
                 src_rank = layer_indices.index(layer_idx) % world_size
                 dist.broadcast(value["k_proj"]["param"].data, src=src_rank)
+
