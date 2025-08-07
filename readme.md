@@ -6,7 +6,7 @@ This repository presents an implementation of the Muon optimizer, enhanced with 
 
 - **QK-Clipping**: Introduces a mechanism to stabilize training by clipping attention logits for each head.
 - **Esasy to use**: Designed to integrate seamlessly with existing transformer and pytorch architectures. Designed to be used as a regular pytorch optimizer.
-- **Scalability**: Optimized for large-scale training scenarios.
+- **Scalability**: Optimized for large-scale training scenarios and implemented for DDP training.
 
 ## QK-Clipping Explained
 
@@ -65,4 +65,5 @@ pip install git+https://github.com/GAD-cell/muon-clip.git@main
 ## Coming soon
 
 -Currently working on an improved version of newton-shulz orthogonalization based on [Accelerating Newton-Shulz Iteration](https://arxiv.org/pdf/2506.10935v1) paper \
--Multi-gpu support based on [distributed muon](https://arxiv.org/html/2502.16982v1)
+-"Zero stage 1" like optimization based on [distributed muon](https://arxiv.org/html/2502.16982v1)
+-Notebooks for training and distributed training with MuonClip

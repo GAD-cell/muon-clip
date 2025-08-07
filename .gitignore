@@ -3,7 +3,7 @@
 *.py[codz]
 *$py.class
 *.pyc
-
+*.deb
 # Extra
 uv.lock
 results_evals/

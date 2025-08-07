@@ -3,8 +3,12 @@ VENV  := .venv
 
 
 TEST_SCRIPT := src/test/test.py
+TEST_DIST_SCRIPT := src/test/test_dist.py
 
-.PHONY: env test
+NUM_GPUS ?= 3
+
+
+.PHONY: env test test-dist
 
 env:
 	@command -v uv >/dev/null 2>&1 || { \
@@ -19,3 +23,6 @@ env:
 
 test:
 	@python3 $(TEST_SCRIPT)
+
+test-dist:
+	@deepspeed --num_gpus=$(NUM_GPUS) $(TEST_DIST_SCRIPT)
