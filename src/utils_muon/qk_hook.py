@@ -68,8 +68,6 @@ class HookRecorder:
         self.handles.clear()
         self.is_registered = False
         
-
-
 hook_recorder = HookRecorder()
 
 import types
