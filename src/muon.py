@@ -2,6 +2,7 @@ import torch
 from torch.optim import Optimizer
 import torch.distributed as dist
 
+
 import re
 import wandb
 from typing import Tuple
@@ -113,7 +114,8 @@ class MuonClip(Optimizer):
     def _stage_zero_muon_update(self,p:torch.Tensor, group:dict, idx:int, world_size:int, rank:int)-> None:
         if p.grad is None:
             p.grad = torch.zeros_like(p)
-                    
+
+        dist.reduce(p.grad,  dst=idx%world_size, op=dist.ReduceOp.AVG) # should be handled automatically if using a framework like deepspeed             
         # Only process parameters assigned to this rank
         if idx % world_size == rank:
             state = self.state[p]
@@ -133,7 +135,7 @@ class MuonClip(Optimizer):
         3. gather param in rank idx %world_size
         4.
         '''
-        
+        pass
 
     def step(self, closure=None):
         """
