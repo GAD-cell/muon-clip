@@ -3,13 +3,13 @@ import re
 from typing import Tuple,List
 
 
-def gelfand_upper_bound(X:torch.Tensor, k:int=1) -> (float, torch.Tensor):
+def gelfand_upper_bound(X:torch.Tensor, k:int=2) -> (torch.tensor, torch.Tensor):
     A = X @ X.T
     Ak = torch.linalg.matrix_power(A, k)
     frob_norm = torch.linalg.norm(Ak, ord='fro')
     upper_bound = frob_norm**(1/(2*k)) # spectral radius < frob_norm^(1/(2*k))
-
-    return upper_bound, A # return A to avoid overhead of recomputing it later
+    normalize_X = X / upper_bound # normalize X to have spectral radius <= 1
+    return normalize_X, A # return A to avoid overhead of recomputing it later
 
 def cans_ortho(X:torch.Tensor, s_interval:Tuple[float,float], poly_degrees:List[int]) -> torch.Tensor:
     """
@@ -27,10 +27,7 @@ def cans_ortho(X:torch.Tensor, s_interval:Tuple[float,float], poly_degrees:List[
     if not a:
         X, a, b = delta_ortho(X, s_interval[1], poly_degrees)
         s_interval = (a, b)
-    #print(s_interval)
-    if s_interval[0] > s_interval[1]:
-        s_interal = (s_interval[1]*0.5, s_interval[1]) # if the interval is not valid, expand it
-        
+
     polynomials = []
     for i in range(len(poly_degrees)):
         if poly_degrees[i] == 3:
@@ -185,9 +182,9 @@ def newton_schulz_accelerated(G:torch.Tensor, poly_degree:List[float]=None, orde
     if G.ndim != 2:
         raise ValueError(f"Input tensor must be 2D but got shape {X.shape}")
 
-    upper_bound, A = gelfand_upper_bound(G)
-    if estimate_lower_bound: s_interval = (None, upper_bound)
-    else: s_interval = (lower_bound, upper_bound)
+    G, A = gelfand_upper_bound(G)
+    if estimate_lower_bound: s_interval = (None, 1)
+    else: s_interval = (lower_bound, 1)
 
     if poly_degree is None:
         poly_degree = [order] * iter
