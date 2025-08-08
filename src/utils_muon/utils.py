@@ -3,13 +3,18 @@ import re
 from typing import Tuple,List
 
 
-def gelfand_upper_bound(X:torch.Tensor, k:int=2) -> (torch.tensor, torch.Tensor):
-    A = X @ X.T
+def gelfand_upper_bound(X:torch.Tensor, k:int=2, eps:float=1e-7) -> (torch.tensor, torch.Tensor):
+    norm = torch.norm(X,dim=(-1, -2)) + eps
+    Y = X / norm   
+    A = Y @ Y.T
     Ak = torch.linalg.matrix_power(A, k)
-    frob_norm = torch.linalg.norm(Ak, ord='fro')
-    upper_bound = frob_norm**(1/(2*k)) # spectral radius < frob_norm^(1/(2*k))
-    normalize_X = X / upper_bound # normalize X to have spectral radius <= 1
-    return normalize_X, A # return A to avoid overhead of recomputing it later
+    frob_norm = torch.norm(Ak, dim=(-1, -2))
+    upper_bound = frob_norm**(1/(2*k)) + eps # spectral radius < frob_norm^(1/(2*k))
+    if torch.isnan(upper_bound):
+        print(f"Warning: NaN upper bound for X with shape {X.shape}, norm={norm}, frob_norm={frob_norm}")
+        return Y , A 
+    return Y/upper_bound, A
+
 
 def cans_ortho(X:torch.Tensor, s_interval:Tuple[float,float], poly_degrees:List[int]) -> torch.Tensor:
     """
@@ -28,18 +33,20 @@ def cans_ortho(X:torch.Tensor, s_interval:Tuple[float,float], poly_degrees:List[
         X, a, b = delta_ortho(X, s_interval[1], poly_degrees)
         s_interval = (a, b)
 
-    polynomials = []
+
     for i in range(len(poly_degrees)):
         if poly_degrees[i] == 3:
             poly, error = order_three_poly(s_interval) # use special formula for degree 3
             s_interval = (1-error, 1+error)
-            polynomials.append(poly)
+            X = poly[1] * X + poly[3] * X @ X.T @ X
         else :
             poly, error = remez(s_interval, poly_degrees[i])
             s_interval = (1-error, 1+error)
-            polynomials.append(poly)
+            X = evaluate_polynomial(poly, X)
 
-    X = compose_polynomials_optimized(polynomials, X) # compose the polynomials
+    #X = compose_polynomials_optimized(polynomials, X) # compose the polynomials
+
+    #print(f"X min={X.min()}, max={X.max()}")
     return X  
 
 
@@ -66,7 +73,7 @@ def delta_ortho(X:torch.Tensor, poly_degrees:List[int], b:float=1.99, max_step:i
     X = compose_polynomials_optimized(polynomials, X)
     return X  
 
-def order_three_poly(s_interval:Tuple[float,float]) -> Tuple[List[float], float]:
+def order_three_poly(s_interval: Tuple[float,float]) -> Tuple[List[float], float]:
     """
     Compute the coefficients for a third-order polynomial approximation.
     
@@ -78,17 +85,21 @@ def order_three_poly(s_interval:Tuple[float,float]) -> Tuple[List[float], float]
     Returns:
         Tuple[List[float], float]: Coefficients of the polynomial and the error.
     """
-    a, b = s_interval
-
-    beta = 0.0
-    delta = 0.0
-
-    fac = 2 * ((a**2 + a *b + b**2)/3)**(3/2)
-    h = 2 / (fac + a**2 * b + a * b**2)
-    alpha = -h
-    gamma = h * (a**2 + a * b + b**2)
-
-    error = (fac - a**2 * b - a * b**2) / (fac + a**2 * b + a * b**2)
+    A, B = s_interval
+    
+    # Explicit formula for optimal 3rd order polynomial on segment [A, B]
+    e = ((A**2 + A * B + B**2) / 3)**(1/2)
+    a = 2 / (2 * e**3 + A**2 * B + B**2 * A)
+    
+    # Polynomial coefficients: -a*x^3 + 0*x^2 + a*(A^2 + A*B + B^2)*x + 0
+    delta = 0.0  # constant coefficient
+    gamma = a * (A**2 + A * B + B**2)  # coefficient of x
+    beta = 0.0   # coefficient of x^2  
+    alpha = -a   # coefficient of x^3
+    
+    # Error calculation
+    error = (2 * e**3 - A**2 * B - B**2 * A) / (2 * e**3 + A**2 * B + B**2 * A)
+    
     poly = [delta, gamma, beta, alpha]
     return poly, error
 
@@ -126,57 +137,27 @@ def tensor_power(X, degree):
     
     return result
 
-def evaluate_cubic_polynomial(coefficients, X):
+def evaluate_polynomial(coefficients, X):
     """
-    Evaluate cubic polynomial p(X) = a0*I + a1*X + a2*X^2 + a3*X^3.
-    Optimized for degree 3 polynomials.
+    Evaluate polynomial p(X) = a0*I + a1*X + a2*X^2 + ... + an*X^n.
     
     Args:
-        coefficients: List of 4 coefficients [a0, a1, a2, a3]
+        coefficients: List of coefficients [a0, a1, ..., an]
         X: Square matrix
     
     Returns:
         Result matrix p(X)
     """
-    a0, a1, a2, a3 = coefficients
-    
+    result = torch.zeros_like(X, device=X.device, dtype=X.dtype)
     I = torch.eye(X.shape[0], device=X.device, dtype=X.dtype)
-    X2 = X @ X
-    X3 = X2 @ X
     
-    return a0 * I + a1 * X + a2 * X2 + a3 * X3
-
-def compose_polynomials_optimized(polynomial_coefficients, input_tensor):
-    """
-    Apply composition of degree-3 matrix polynomials.
-    
-    Args:
-        polynomial_coefficients: List of lists, each with 4 coefficients [a0, a1, a2, a3]
-        input_tensor: PyTorch tensor of shape (n, m)
-    
-    Returns:
-        Result matrix after applying the polynomial composition
-    """
-    if not polynomial_coefficients:
-        return input_tensor
-    
-    current_values = input_tensor.clone()
-    
-    for coefficients in polynomial_coefficients:
-        if not coefficients or len(coefficients) != 4:
-            continue
-        
-        # For Newton-Schulz orthogonalization with rectangular matrices
-        if current_values.shape[0] != current_values.shape[1]:
-            A = current_values @ current_values.T
-            A_result = evaluate_cubic_polynomial(coefficients, A)
-            current_values = A_result @ current_values
+    for i, coeff in enumerate(coefficients):
+        if i == 0:
+            result += coeff * I
         else:
-            # For square matrices
-            current_values = evaluate_cubic_polynomial(coefficients, current_values)
+            result += coeff * tensor_power(X, i)
     
-    return current_values
-
+    return result
 
 def newton_schulz_accelerated(G:torch.Tensor, poly_degree:List[float]=None, order:int=3, estimate_lower_bound:int=False, lower_bound=1e-3, iter:int=9) -> torch.Tensor:
     if G.ndim != 2:
@@ -216,21 +197,18 @@ def adam_update(grad, buf1, buf2, step, betas, eps):
 
 def muon_update(grad, momentum, beta:float=0.95, ns_steps:int=5, nesterov:bool=True, better_newton:bool=True):
     momentum.lerp_(grad, 1 - beta)
-    update = grad.lerp_(momentum, beta) if nesterov else momentum
-    if update.ndim == 4: # for the case of conv filters
-        update = update.view(len(update), -1)
-    
-    is_transpose = update.size(0) > update.size(1)
-    if is_transpose:
-        update = update.T  
+    grad = grad.lerp_(momentum, beta) if nesterov else momentum
+    if grad.ndim == 4: # for the case of conv filters
+        grad = grad.view(len(update), -1)
 
-    if better_newton: update = newton_schulz_accelerated(update, iter=ns_steps)
-    else: update = newtonschulz(update, steps=ns_steps)
-    update *= max(1, grad.size(-2) / grad.size(-1))**0.5
-    
-    if is_transpose:
-        update = update.T
-    return update
+    is_transpose = grad.size(0) > grad.size(1)
+    if is_transpose: grad = grad.T  
+    if better_newton: grad = newton_schulz_accelerated(grad, iter=ns_steps)
+    else: grad = newtonschulz(grad, steps=ns_steps)
+    grad *= max(1, grad.size(-2) / grad.size(-1))**0.5
+    if is_transpose: grad = grad.T
+
+    return grad
 
 
 
