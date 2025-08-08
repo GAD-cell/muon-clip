@@ -4,7 +4,7 @@ import os
 import sys
 import re
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
-from muon_clip import MuonClip, MuonConfig
+from muon import MuonClip, MuonConfig
 
 model_name = "Qwen/Qwen3-0.6B"  
 tokenizer = AutoTokenizer.from_pretrained(model_name)
