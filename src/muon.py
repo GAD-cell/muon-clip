@@ -207,29 +207,29 @@ class MuonClip(Optimizer):
 
 
         #max logits log
-        if wandb.run is not None:
-            global_max = 0.0
-            for key, value in old_proj_dic.items():
-                q_out = value["q_proj"]["out"]
-                k_out = value["k_proj"]["out"]
+        # if wandb.run is not None or self.muon_config.log_max_logits:
+        #     global_max = 0.0
+        #     for key, value in old_proj_dic.items():
+        #         q_out = value["q_proj"]["out"]
+        #         k_out = value["k_proj"]["out"]
         
-                q_out = repeat_kv(
-                                    q_out,
-                                    self.n_rep,
-                                    self.model_config.num_key_value_heads,
-                                    self.model_config.head_dim)
-                k_out = repeat_kv(
-                                    k_out,
-                                    self.n_rep,
-                                    self.model_config.num_key_value_heads,
-                                    self.model_config.head_dim)
+        #         q_out = repeat_kv(
+        #                             q_out,
+        #                             self.n_rep,
+        #                             self.model_config.num_key_value_heads,
+        #                             self.model_config.head_dim)
+        #         k_out = repeat_kv(
+        #                             k_out,
+        #                             self.n_rep,
+        #                             self.model_config.num_key_value_heads,
+        #                             self.model_config.head_dim)
 
-                old_attn_logits = torch.matmul(q_out,k_out.transpose(-2,-1))
-                per_head_max = old_attn_logits.amax(dim=(-2, -1)).amax(dim=0) 
-                old_local_max = per_head_max.amax(dim=0).item()
-                global_max = old_local_max if old_local_max > global_max else global_max
+        #         old_attn_logits = torch.matmul(q_out,k_out.transpose(-2,-1))
+        #         per_head_max = old_attn_logits.amax(dim=(-2, -1)).amax(dim=0) 
+        #         old_local_max = per_head_max.amax(dim=0).item()
+        #         global_max = old_local_max if old_local_max > global_max else global_max
             
-            wandb.log({"max_logits": global_max}, commit=False)
+            
 
         #QK-clipping
         global_max = torch.tensor(0.0)
