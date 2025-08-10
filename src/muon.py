@@ -32,7 +32,6 @@ class MuonConfig:
     log_max_logits:bool = True
     better_ortho:bool = True # Use CANS orthogonalization
 
-    log_max_logits:bool = True
 
 
 
@@ -206,31 +205,6 @@ class MuonClip(Optimizer):
                                          state["step"], group["betas"], group["eps"])
                     p.mul_(1 - group["lr"] * group["weight_decay"])
                     p.add_(update, alpha=-group["lr"])
-
-
-        #max logits log
-        # if wandb.run is not None or self.muon_config.log_max_logits:
-        #     global_max = 0.0
-        #     for key, value in old_proj_dic.items():
-        #         q_out = value["q_proj"]["out"]
-        #         k_out = value["k_proj"]["out"]
-        
-        #         q_out = repeat_kv(
-        #                             q_out,
-        #                             self.n_rep,
-        #                             self.model_config.num_key_value_heads,
-        #                             self.model_config.head_dim)
-        #         k_out = repeat_kv(
-        #                             k_out,
-        #                             self.n_rep,
-        #                             self.model_config.num_key_value_heads,
-        #                             self.model_config.head_dim)
-
-        #         old_attn_logits = torch.matmul(q_out,k_out.transpose(-2,-1))
-        #         per_head_max = old_attn_logits.amax(dim=(-2, -1)).amax(dim=0) 
-        #         old_local_max = per_head_max.amax(dim=0).item()
-        #         global_max = old_local_max if old_local_max > global_max else global_max
-            
             
 
         #QK-clipping
@@ -363,11 +337,8 @@ class MuonClip(Optimizer):
         rank = dist.get_rank()
         
         layer_indices = list(qk_proj_dic.keys())
-<<<<<<< HEAD
-        global_max = torch.tensor(0.0,device=torch.device("cuda", rank))global_max = torch.tensor(0.0)
-=======
+
         global_max = torch.tensor(0.0,device=torch.device("cuda", rank))
->>>>>>> 0d27cfe (correct global_max rank)
         for i, layer_idx in enumerate(layer_indices):
             # Only process layers assigned to this rank
             if i % world_size != rank:
