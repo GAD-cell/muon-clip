@@ -30,6 +30,8 @@ class MuonConfig:
     adam_decay: float = 0.0
     adam_eps: float = 1e-10
 
+    log_max_logits:bool = True
+
 
 
 
@@ -204,31 +206,32 @@ class MuonClip(Optimizer):
 
 
         #max logits log
-        if wandb.run is not None:
-            global_max = 0.0
-            for key, value in old_proj_dic.items():
-                q_out = value["q_proj"]["out"]
-                k_out = value["k_proj"]["out"]
+        # if wandb.run is not None or self.muon_config.log_max_logits:
+        #     global_max = 0.0
+        #     for key, value in old_proj_dic.items():
+        #         q_out = value["q_proj"]["out"]
+        #         k_out = value["k_proj"]["out"]
         
-                q_out = repeat_kv(
-                                    q_out,
-                                    self.n_rep,
-                                    self.model_config.num_key_value_heads,
-                                    self.model_config.head_dim)
-                k_out = repeat_kv(
-                                    k_out,
-                                    self.n_rep,
-                                    self.model_config.num_key_value_heads,
-                                    self.model_config.head_dim)
+        #         q_out = repeat_kv(
+        #                             q_out,
+        #                             self.n_rep,
+        #                             self.model_config.num_key_value_heads,
+        #                             self.model_config.head_dim)
+        #         k_out = repeat_kv(
+        #                             k_out,
+        #                             self.n_rep,
+        #                             self.model_config.num_key_value_heads,
+        #                             self.model_config.head_dim)
 
-                old_attn_logits = torch.matmul(q_out,k_out.transpose(-2,-1))
-                per_head_max = old_attn_logits.amax(dim=(-2, -1)).amax(dim=0) 
-                old_local_max = per_head_max.amax(dim=0).item()
-                global_max = old_local_max if old_local_max > global_max else global_max
+        #         old_attn_logits = torch.matmul(q_out,k_out.transpose(-2,-1))
+        #         per_head_max = old_attn_logits.amax(dim=(-2, -1)).amax(dim=0) 
+        #         old_local_max = per_head_max.amax(dim=0).item()
+        #         global_max = old_local_max if old_local_max > global_max else global_max
             
-            wandb.log({"max_logits": global_max}, commit=False)
+            
 
         #QK-clipping
+        global_max = torch.tensor(0.0)
         for key, value in qk_proj_dic.items(): #iterate over layers
             q_param, q_proj = value["q_proj"]["param"], value["q_proj"]["proj"] 
             k_param, k_proj = value["k_proj"]["param"], value["k_proj"]["proj"] 
@@ -249,6 +252,10 @@ class MuonClip(Optimizer):
             per_head_eta = (self.t / per_head_max).clamp(max=1.0)
             per_head_eta = per_head_eta.unsqueeze(0).unsqueeze(-1)
             
+            #log max logits
+            curr_max = per_head_max.amax(dim=0)
+            global_max = max(curr_max, global_max).clamp(max=self.t)
+
             #separate query params heads and scale by eta per head
             q = q_param.data.transpose(-2,-1) 
             q = q.data.view(q.size(0), -1, self.model_config.head_dim) # [in_dim,out_dim] -> [in_dim,num_head,head_dim]
@@ -267,7 +274,10 @@ class MuonClip(Optimizer):
             k *= per_key_head_eta**(1-self.alpha)
             k = k.view(k.size(0),-1) # original size (in_dim,out_dim)
             k = k.transpose(-2,-1)
-            k_param.data.copy_(k.clone())        
+            k_param.data.copy_(k.clone())      
+
+        if wandb.run is not None:
+            wandb.log({"max_logits": global_max.item()}, commit=False)  
 
         return loss
 
@@ -350,7 +360,7 @@ class MuonClip(Optimizer):
         rank = dist.get_rank()
         
         layer_indices = list(qk_proj_dic.keys())
-        
+        global_max = torch.tensor(0.0)
         for i, layer_idx in enumerate(layer_indices):
             # Only process layers assigned to this rank
             if i % world_size != rank:
@@ -372,6 +382,9 @@ class MuonClip(Optimizer):
             per_head_eta = (self.t / per_head_max).clamp(max=1.0)
             per_head_eta = per_head_eta.unsqueeze(0).unsqueeze(-1)
             
+            #log max logits
+            curr_max = per_head_max.amax(dim=0)
+            global_max = max(curr_max, global_max).clamp(max=self.t)
 
             q = q_param.data.transpose(-2, -1) 
             q = q.data.view(q.size(0), -1, self.model_config.head_dim)
@@ -401,4 +414,11 @@ class MuonClip(Optimizer):
             if "k_proj" in value:
                 src_rank = layer_indices.index(layer_idx) % world_size
                 dist.broadcast(value["k_proj"]["param"].data, src=src_rank)
+        
+        dist.reduce(global_max,  dst=0, op=dist.ReduceOp.MAX)
+        if rank == 0:
+            global_max = global_max.item()
+            if wandb.run is not None:
+                wandb.log({"max_logits": global_max}, commit=False)
+
 

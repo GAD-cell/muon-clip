@@ -7,7 +7,7 @@ from transformers import AutoTokenizer, AutoModelForCausalLM, AutoConfig
 
 # === Import custom optimizer ===
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
-from muon_clip import MuonClip, MuonConfig
+from muon import MuonClip, MuonConfig
 
 
 # === Load model/tokenizer ===

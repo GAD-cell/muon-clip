@@ -11,6 +11,7 @@ readme = "README.md"
 requires-python = ">=3.8"
 dependencies = [
     "transformers==4.53.0",
+    "accelerate",
     "deepspeed",
     "torch",
     "wandb"
