@@ -359,7 +359,7 @@ class MuonClip(Optimizer):
         rank = dist.get_rank()
         
         layer_indices = list(qk_proj_dic.keys())
-        global_max = torch.tensor(0.0)
+        global_max = torch.tensor(0.0,device=torch.device("cuda", rank))
         for i, layer_idx in enumerate(layer_indices):
             # Only process layers assigned to this rank
             if i % world_size != rank:
