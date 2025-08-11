@@ -248,7 +248,7 @@ class MuonClip(Optimizer):
                                 self.model_config.head_dim)
 
             attn_logits = torch.matmul(q_proj,k_proj.transpose(-2,-1))
-            per_head_max = attn_logits.amax(dim=(-2, -1)).amax(dim=0) # 1 max per head 
+            per_head_max = attn_logits.amax(dim=(-2, -1)).amax(dim=0) / k_proj.size(-1)  # per-head scalar 
             per_head_eta = (self.t / per_head_max).clamp(max=1.0)
             per_head_eta = per_head_eta.unsqueeze(0).unsqueeze(-1)
             
@@ -377,8 +377,8 @@ class MuonClip(Optimizer):
             q_proj = repeat_kv(q_proj, self.n_rep, self.model_config.num_key_value_heads, self.model_config.head_dim)
             k_proj = repeat_kv(k_proj, self.n_rep, self.model_config.num_key_value_heads, self.model_config.head_dim)
 
-            attn_logits = torch.matmul(q_proj, k_proj.transpose(-2, -1))
-            per_head_max = attn_logits.amax(dim=(-2, -1)).amax(dim=0)
+            attn_logits = torch.matmul(q_proj, k_proj.transpose(-2, -1)) 
+            per_head_max = attn_logits.amax(dim=(-2, -1)).amax(dim=0) / k_proj.size(-1) 
             per_head_eta = (self.t / per_head_max).clamp(max=1.0)
             per_head_eta = per_head_eta.unsqueeze(0).unsqueeze(-1)
             
