@@ -156,8 +156,6 @@ def evaluate_polynomial(coefficients, X):
     return result
 
 def newton_schulz_accelerated(G:torch.Tensor, poly_degree:List[float]=None, order:int=3, estimate_lower_bound:int=False, lower_bound=1e-3, iter:int=9) -> torch.Tensor:
-    if G.ndim != 2:
-        raise ValueError(f"Input tensor must be 2D but got shape {X.shape}")
 
     G, A = gelfand_upper_bound(G)
     if estimate_lower_bound: s_interval = (None, 1)
@@ -172,15 +170,12 @@ def newton_schulz_accelerated(G:torch.Tensor, poly_degree:List[float]=None, orde
 def newtonschulz(G, steps=5, eps=1e-7):
     a, b, c = (3.4445, -4.7750, 2.0315)
     X = G / (G.norm() + eps)
-    transpose = G.size(0) > G.size(1)
-    if transpose:
-        X = X.T
+    
     for _ in range(steps):
         A = X @ X.T
         B = b * A + c * A @ A
         X = a * X + B @ X
-    if transpose:
-        X = X.T
+
     return X
 
 def adam_update(grad, buf1, buf2, step, betas, eps):
@@ -191,7 +186,10 @@ def adam_update(grad, buf1, buf2, step, betas, eps):
     return buf1c / (buf2c.sqrt() + eps)
 
 
-def muon_update(grad, momentum, beta:float=0.95, ns_steps:int=9, nesterov:bool=True, better_newton:bool=True):
+def muon_update(grad, momentum, beta:float=0.95, ns_steps:int=9, nesterov:bool=True, better_newton:bool=False):
+    if grad.ndim != 2:
+        raise ValueError(f"Input tensor must be 2D but got shape {X.shape}")
+    
     momentum.lerp_(grad, 1 - beta)
     grad = grad.lerp_(momentum, beta) if nesterov else momentum
     if grad.ndim == 4: # for the case of conv filters
