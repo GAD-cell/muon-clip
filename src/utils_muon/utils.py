@@ -58,7 +58,7 @@ def delta_ortho(X:torch.Tensor, poly_degrees:List[int], b:float=1.99, max_step:i
         a,b = (l+r)/2,b
         polynomials = []
         for i in range(len(poly_degrees)):
-            poly, error = remez((a,b), 2*poly_degrees[i]-1)
+            poly, error = remez((a,b), poly_degrees[i])
             a,b = (1-error), (1+error)
             polynomials.append(poly)
 
@@ -191,7 +191,7 @@ def adam_update(grad, buf1, buf2, step, betas, eps):
     return buf1c / (buf2c.sqrt() + eps)
 
 
-def muon_update(grad, momentum, beta:float=0.95, ns_steps:int=5, nesterov:bool=True, better_newton:bool=False):
+def muon_update(grad, momentum, beta:float=0.95, ns_steps:int=9, nesterov:bool=True, better_newton:bool=True):
     momentum.lerp_(grad, 1 - beta)
     grad = grad.lerp_(momentum, beta) if nesterov else momentum
     if grad.ndim == 4: # for the case of conv filters

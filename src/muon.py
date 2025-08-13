@@ -160,7 +160,7 @@ class MuonClip(Optimizer):
         for group in self.param_groups:
             if group["use_muon"]:
                 qk_proj_dic = {}
-                old_proj_dic = {}
+                #old_proj_dic = {}
                 for i,p in enumerate(group["params"]):
                     if p.grad is None:
                         # continue
@@ -176,9 +176,9 @@ class MuonClip(Optimizer):
                     if group["param_names"][i] :
                         index = group["param_names"][i][0]
                         proj_type = group["param_names"][i][1]
-                        if not old_proj_dic.get(index,None): old_proj_dic[index] = {}
-                        output = hook_recorder.attn_outputs[index][proj_type]
-                        old_proj_dic[index][proj_type] = {'out':output}
+                        #if not old_proj_dic.get(index,None): old_proj_dic[index] = {}
+                        #output = hook_recorder.attn_outputs[index][proj_type]
+                        #old_proj_dic[index][proj_type] = {'out':output}
                         
                         if self.enable_clipping:
                             if not qk_proj_dic.get(index,None): qk_proj_dic[index] = {}

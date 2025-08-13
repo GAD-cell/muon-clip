@@ -47,7 +47,7 @@ class HookRecorder:
                 proj_type = "q_proj"
                 handle_in = module.register_forward_hook(self.make_proj_input_hook(layer_idx, proj_type))
                 #handle_out = module.register_forward_hook(self.make_proj_output_hook(layer_idx, proj_type))
-                self.handles.extend([handle_in, handle_out])
+                self.handles.extend([handle_in])
 
             # elif m := re.match(r".*layers\.(\d+)\.self_attn\.(k_proj)$", name):
             #     layer_idx = int(m.group(1))
@@ -56,7 +56,7 @@ class HookRecorder:
             #     self.handles.append(handle_out)
 
                 self.found_layer = True
-        print(f"Hooked {len(self.handles)//3} layers")
+        print(f"Hooked {len(self.handles)} layers")
         self.is_registered = True
 
         return 
