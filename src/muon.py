@@ -16,12 +16,12 @@ def is_deepspeed():
 
 @dataclass
 class MuonConfig:
-    muon_lr: float = 5e-4
+    muon_lr: float = 5e-3
     muon_momentum: float = 0.95
     muon_decay: float = 0.0
     
     enable_clipping: bool = True
-    clipping_threshold: float = 20.0
+    clipping_threshold: float = 50.0
     clipping_alpha: float = 0.5
 
     adam_lr: float = 5e-4

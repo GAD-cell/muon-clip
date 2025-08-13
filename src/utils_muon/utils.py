@@ -44,9 +44,6 @@ def cans_ortho(X:torch.Tensor, s_interval:Tuple[float,float], poly_degrees:List[
             s_interval = (1-error, 1+error)
             X = evaluate_polynomial(poly, X)
 
-    #X = compose_polynomials_optimized(polynomials, X) # compose the polynomials
-
-    #print(f"X min={X.min()}, max={X.max()}")
     return X  
 
 
@@ -92,12 +89,11 @@ def order_three_poly(s_interval: Tuple[float,float]) -> Tuple[List[float], float
     a = 2 / (2 * e**3 + A**2 * B + B**2 * A)
     
     # Polynomial coefficients: -a*x^3 + 0*x^2 + a*(A^2 + A*B + B^2)*x + 0
-    delta = 0.0  # constant coefficient
-    gamma = a * (A**2 + A * B + B**2)  # coefficient of x
-    beta = 0.0   # coefficient of x^2  
-    alpha = -a   # coefficient of x^3
+    delta = 0.0  
+    gamma = a * (A**2 + A * B + B**2) 
+    beta = 0.0     
+    alpha = -a  
     
-    # Error calculation
     error = (2 * e**3 - A**2 * B - B**2 * A) / (2 * e**3 + A**2 * B + B**2 * A)
     
     poly = [delta, gamma, beta, alpha]
@@ -195,7 +191,7 @@ def adam_update(grad, buf1, buf2, step, betas, eps):
     return buf1c / (buf2c.sqrt() + eps)
 
 
-def muon_update(grad, momentum, beta:float=0.95, ns_steps:int=5, nesterov:bool=True, better_newton:bool=True):
+def muon_update(grad, momentum, beta:float=0.95, ns_steps:int=5, nesterov:bool=True, better_newton:bool=False):
     momentum.lerp_(grad, 1 - beta)
     grad = grad.lerp_(momentum, beta) if nesterov else momentum
     if grad.ndim == 4: # for the case of conv filters
