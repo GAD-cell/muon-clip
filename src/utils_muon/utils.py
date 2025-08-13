@@ -101,7 +101,7 @@ def order_three_poly(s_interval: Tuple[float,float]) -> Tuple[List[float], float
 
 def remez(s_interval:Tuple[float,float], poly_degree:int):
     """
-    Compute the Remez coefficients for Chebyshev polynomial approximation.
+    Compute the Remez coefficients for Chebyshev polynomial approximation. Approximates the constant function 1 on the interval [s_interval[0], s_interval[1]].
     
     Args:
         s_interval (Tuple[float, float]): Interval for Chebyshev approximation.
