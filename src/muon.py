@@ -316,7 +316,7 @@ class MuonClip(Optimizer):
                             index, proj_type = param_name
                             
                             # Skip if hook data not available specially when deepspeed is initialized
-                            if index not in hook_recorder.attn_outputs:
+                            if index not in hook_recorder.attn_inputs:
                                 continue
                                 
                             if index not in qk_proj_dic:
