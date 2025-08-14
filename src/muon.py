@@ -2,7 +2,6 @@ import torch
 from torch.optim import Optimizer
 import torch.distributed as dist
 
-
 import re
 import wandb
 from typing import Tuple
@@ -17,12 +16,12 @@ def is_deepspeed():
 
 @dataclass
 class MuonConfig:
-    muon_lr: float = 5e-4
+    muon_lr: float = 5e-3
     muon_momentum: float = 0.95
     muon_decay: float = 0.0
     
     enable_clipping: bool = True
-    clipping_threshold: float = 20.0
+    clipping_threshold: float = 50.0
     clipping_alpha: float = 0.5
 
     adam_lr: float = 5e-4
@@ -161,7 +160,7 @@ class MuonClip(Optimizer):
         for group in self.param_groups:
             if group["use_muon"]:
                 qk_proj_dic = {}
-                old_proj_dic = {}
+                #old_proj_dic = {}
                 for i,p in enumerate(group["params"]):
                     if p.grad is None:
                         # continue
@@ -177,9 +176,9 @@ class MuonClip(Optimizer):
                     if group["param_names"][i] :
                         index = group["param_names"][i][0]
                         proj_type = group["param_names"][i][1]
-                        if not old_proj_dic.get(index,None): old_proj_dic[index] = {}
-                        output = hook_recorder.attn_outputs[index][proj_type]
-                        old_proj_dic[index][proj_type] = {'out':output}
+                        #if not old_proj_dic.get(index,None): old_proj_dic[index] = {}
+                        #output = hook_recorder.attn_outputs[index][proj_type]
+                        #old_proj_dic[index][proj_type] = {'out':output}
                         
                         if self.enable_clipping:
                             if not qk_proj_dic.get(index,None): qk_proj_dic[index] = {}
