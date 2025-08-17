@@ -67,6 +67,6 @@ pip install git+https://github.com/GAD-cell/muon-clip.git@main
 -Currently working on an improved version of newton-shulz orthogonalization based on [Accelerating Newton-Shulz Iteration](https://arxiv.org/pdf/2506.10935v1) paper \
 Experimental branch : newton-shulz-v2 with first results below : \
 <img src="./images/W&B Chart 14_08_2025 01_07_41.png" alt="Training max_logits" width="800"/>
-
+<img src="./images/W&B Chart 17_08_2025 22_55_29.png" alt="Training max_logits" width="800"/>
 -"Zero stage 1" like optimization based on [distributed muon](https://arxiv.org/html/2502.16982v1)\
 -Notebooks for training and distributed training with MuonClip
