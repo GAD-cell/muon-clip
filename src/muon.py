@@ -2,7 +2,6 @@ import torch
 from torch.optim import Optimizer
 import torch.distributed as dist
 
-
 import re
 import wandb
 from typing import Tuple
@@ -17,12 +16,12 @@ def is_deepspeed():
 
 @dataclass
 class MuonConfig:
-    muon_lr: float = 5e-4
+    muon_lr: float = 5e-2
     muon_momentum: float = 0.95
     muon_decay: float = 0.0
     
     enable_clipping: bool = True
-    clipping_threshold: float = 20.0
+    clipping_threshold: float = 50.0
     clipping_alpha: float = 0.5
 
     adam_lr: float = 5e-4
@@ -31,6 +30,7 @@ class MuonConfig:
     adam_eps: float = 1e-10
 
     log_max_logits:bool = True
+    better_ortho:bool = True # Use CANS orthogonalization
 
 
 
@@ -81,6 +81,7 @@ class MuonClip(Optimizer):
         self.muon_config = muon_config
         self.n_rep = model_config.num_attention_heads // model_config.num_key_value_heads
         self.zero_stage = 0 # Zero stage for distributed training
+        self.better_ortho = muon_config.better_ortho
 
         muon_group = []
         adam_group = []
@@ -123,7 +124,7 @@ class MuonClip(Optimizer):
             state = self.state[p]
             if len(state) == 0:
                 state["momentum_buffer"] = torch.zeros_like(p)
-            update = muon_update(p.grad, state["momentum_buffer"], beta=group["momentum"])
+            update = muon_update(p.grad, state["momentum_buffer"], beta=group["momentum"],better_ortho=self.better_ortho)
             p.mul_(1 - group["lr"] * group["weight_decay"])
             p.add_(update.reshape(p.shape), alpha=-group["lr"])
         dist.broadcast(p.data, src=idx % world_size, async_op=True)
@@ -161,7 +162,7 @@ class MuonClip(Optimizer):
         for group in self.param_groups:
             if group["use_muon"]:
                 qk_proj_dic = {}
-                old_proj_dic = {}
+                #old_proj_dic = {}
                 for i,p in enumerate(group["params"]):
                     if p.grad is None:
                         # continue
@@ -169,7 +170,7 @@ class MuonClip(Optimizer):
                     state = self.state[p]
                     if len(state) == 0:
                         state["momentum_buffer"] = torch.zeros_like(p)
-                    update = muon_update(p.grad, state["momentum_buffer"], beta=group["momentum"])
+                    update = muon_update(p.grad, state["momentum_buffer"], beta=group["momentum"], better_ortho=self.better_ortho)
                     p.mul_(1 - group["lr"] * group["weight_decay"])
                     p.add_(update.reshape(p.shape), alpha=-group["lr"])
                 
@@ -177,9 +178,9 @@ class MuonClip(Optimizer):
                     if group["param_names"][i] :
                         index = group["param_names"][i][0]
                         proj_type = group["param_names"][i][1]
-                        if not old_proj_dic.get(index,None): old_proj_dic[index] = {}
-                        output = hook_recorder.attn_outputs[index][proj_type]
-                        old_proj_dic[index][proj_type] = {'out':output}
+                        #if not old_proj_dic.get(index,None): old_proj_dic[index] = {}
+                        #output = hook_recorder.attn_outputs[index][proj_type]
+                        #old_proj_dic[index][proj_type] = {'out':output}
                         
                         if self.enable_clipping:
                             if not qk_proj_dic.get(index,None): qk_proj_dic[index] = {}
@@ -203,32 +204,6 @@ class MuonClip(Optimizer):
                                          state["step"], group["betas"], group["eps"])
                     p.mul_(1 - group["lr"] * group["weight_decay"])
                     p.add_(update, alpha=-group["lr"])
-
-
-        #max logits log
-        # if wandb.run is not None or self.muon_config.log_max_logits:
-        #     global_max = 0.0
-        #     for key, value in old_proj_dic.items():
-        #         q_out = value["q_proj"]["out"]
-        #         k_out = value["k_proj"]["out"]
-        
-        #         q_out = repeat_kv(
-        #                             q_out,
-        #                             self.n_rep,
-        #                             self.model_config.num_key_value_heads,
-        #                             self.model_config.head_dim)
-        #         k_out = repeat_kv(
-        #                             k_out,
-        #                             self.n_rep,
-        #                             self.model_config.num_key_value_heads,
-        #                             self.model_config.head_dim)
-
-        #         old_attn_logits = torch.matmul(q_out,k_out.transpose(-2,-1))
-        #         per_head_max = old_attn_logits.amax(dim=(-2, -1)).amax(dim=0) 
-        #         old_local_max = per_head_max.amax(dim=0).item()
-        #         global_max = old_local_max if old_local_max > global_max else global_max
-            
-            
 
         #QK-clipping
         global_max = torch.tensor(0.0)
@@ -317,7 +292,7 @@ class MuonClip(Optimizer):
                             index, proj_type = param_name
                             
                             # Skip if hook data not available specially when deepspeed is initialized
-                            if index not in hook_recorder.attn_outputs:
+                            if index not in hook_recorder.attn_inputs:
                                 continue
                                 
                             if index not in qk_proj_dic:
