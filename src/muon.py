@@ -35,7 +35,6 @@ class MuonConfig:
 
 
 
-
 class MuonClip(Optimizer):
     '''
     Hybrid optimizer that combines Muon and Adam optimization strategies with optional input clipping 
@@ -205,7 +204,6 @@ class MuonClip(Optimizer):
                                          state["step"], group["betas"], group["eps"])
                     p.mul_(1 - group["lr"] * group["weight_decay"])
                     p.add_(update, alpha=-group["lr"])
-            
 
         #QK-clipping
         global_max = torch.tensor(0.0)
