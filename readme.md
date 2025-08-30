@@ -43,7 +43,6 @@ muon_config = MuonConfig(
     adam_decay: float = 0.0
     adam_eps: float = 1e-10
 
-    log_max_logits:bool = True
     better_ortho:bool = False # Experimental: Use CANS orthogonalization. Suggest to disable it for now (It's not optimized at all).
 )
 
