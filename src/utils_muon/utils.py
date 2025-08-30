@@ -186,7 +186,7 @@ def adam_update(grad, buf1, buf2, step, betas, eps):
     return buf1c / (buf2c.sqrt() + eps)
 
 
-def muon_update(grad, momentum, beta:float=0.95, ns_steps:int=9, nesterov:bool=True, better_ortho:bool=False):
+def muon_update(grad, momentum, beta:float=0.95, ns_steps:int=5, nesterov:bool=True, better_ortho:bool=False):
     if grad.ndim != 2:
         raise ValueError(f"Input tensor must be 2D but got shape {grad.shape}")
     

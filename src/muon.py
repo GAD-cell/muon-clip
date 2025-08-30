@@ -19,7 +19,8 @@ class MuonConfig:
     muon_lr: float = 5e-2
     muon_momentum: float = 0.95
     muon_decay: float = 0.0
-    
+    ns_steps:int = 5 #Number of newton-shulz interations. Increase for more precision during orthogonalization
+
     enable_clipping: bool = True
     clipping_layers_mapping = {"q_proj":"q_proj","k_proj":"k_proj"} # If using a special model with non standard q_proj and k_proj names. Just change the value to the desired name.
     clipping_threshold: float = 50.0
@@ -33,6 +34,7 @@ class MuonConfig:
     log_max_logits:bool = True
     better_ortho:bool = False # Experimental: Use CANS orthogonalization. Suggest to disable it for now.
 
+    
 
 
 
@@ -84,6 +86,7 @@ class MuonClip(Optimizer):
         self.muon_config = muon_config
         self.n_rep = model_config.num_attention_heads // model_config.num_key_value_heads
         self.zero_stage = 0 # Zero stage for distributed training
+        self.ns_steps = muon_config.ns_steps 
         self.better_ortho = muon_config.better_ortho
 
         muon_group = []
@@ -173,7 +176,7 @@ class MuonClip(Optimizer):
                     state = self.state[p]
                     if len(state) == 0:
                         state["momentum_buffer"] = torch.zeros_like(p)
-                    update = muon_update(p.grad, state["momentum_buffer"], beta=group["momentum"], better_ortho=self.better_ortho)
+                    update = muon_update(p.grad, state["momentum_buffer"], beta=group["momentum"], ns_steps=self.ns_steps, better_ortho=self.better_ortho)
                     p.mul_(1 - group["lr"] * group["weight_decay"])
                     p.add_(update.reshape(p.shape), alpha=-group["lr"])
                 
