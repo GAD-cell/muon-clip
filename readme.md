@@ -28,20 +28,23 @@ from transformers import AutoConfig
 # model config can also be a dic with at least num_key_value_heads,num_attention_heads and head_dim keys
 model_config = AutoConfig.from_pretrained("{hf_model}")
 
-muon_config = MuonConfig(
-    muon_lr=5e-4,
-    muon_momentum=0.95,
-    muon_decay=0.0,
+class MuonConfig:
+    muon_lr: float = 5e-2 
+    muon_momentum: float = 0.95
+    muon_decay: float = 0.0
     
-    enable_clipping=True,
-    clipping_threshold=20.0,
-    clipping_alpha=0.5,
+    enable_clipping: bool = True
+    clipping_layers_mapping = {"q_proj":"q_proj","k_proj":"k_proj"} # If using a special model with non standard q_proj and k_proj names. Just change the value to the desired name.
+    clipping_threshold: float = 50.0
+    clipping_alpha: float = 0.5
 
-    adam_lr=5e-4,
-    adam_betas=(0.9, 0.95),
-    adam_decay=0.0,
-    adam_eps=1e-10
-)
+    adam_lr: float = 5e-4
+    adam_betas: Tuple[float, float] = (0.9, 0.95)
+    adam_decay: float = 0.0
+    adam_eps: float = 1e-10
+
+    log_max_logits:bool = True
+    better_ortho:bool = False # Experimental: Use CANS orthogonalization. Suggest to disable it for now (It's not optimized at all).
 
 optimizer = MuonClip(model, model_config, muon_config)
 
