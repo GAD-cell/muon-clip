@@ -28,7 +28,7 @@ from transformers import AutoConfig
 # model config can also be a dic with at least num_key_value_heads,num_attention_heads and head_dim keys
 model_config = AutoConfig.from_pretrained("{hf_model}")
 
-class MuonConfig:
+muon_config = MuonConfig(
     muon_lr: float = 5e-2 
     muon_momentum: float = 0.95
     muon_decay: float = 0.0
@@ -45,6 +45,7 @@ class MuonConfig:
 
     log_max_logits:bool = True
     better_ortho:bool = False # Experimental: Use CANS orthogonalization. Suggest to disable it for now (It's not optimized at all).
+)
 
 optimizer = MuonClip(model, model_config, muon_config)
 
