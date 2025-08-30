@@ -188,12 +188,12 @@ def adam_update(grad, buf1, buf2, step, betas, eps):
 
 def muon_update(grad, momentum, beta:float=0.95, ns_steps:int=9, nesterov:bool=True, better_ortho:bool=False):
     if grad.ndim != 2:
-        raise ValueError(f"Input tensor must be 2D but got shape {X.shape}")
+        raise ValueError(f"Input tensor must be 2D but got shape {grad.shape}")
     
     momentum.lerp_(grad, 1 - beta)
     grad = grad.lerp_(momentum, beta) if nesterov else momentum
     if grad.ndim == 4: # for the case of conv filters
-        grad = grad.view(len(update), -1)
+        grad = grad.view(len(grad), -1)
 
     is_transpose = grad.size(0) > grad.size(1)
     if is_transpose: grad = grad.T  
