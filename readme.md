@@ -32,7 +32,9 @@ muon_config = MuonConfig(
     muon_lr: float = 5e-2 
     muon_momentum: float = 0.95
     muon_decay: float = 0.0
-    
+    ns_steps:int = 5 #Number of newton-shulz interations. Increase for more precision during orthogonalization
+
+
     enable_clipping: bool = True
     clipping_layers_mapping = {"q_proj":"q_proj","k_proj":"k_proj"} # If using a special model with non standard q_proj and k_proj names. Just change the value to the desired name.
     clipping_threshold: float = 50.0
