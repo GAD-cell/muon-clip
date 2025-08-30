@@ -18,7 +18,8 @@ def repeat_kv(hidden_states: torch.Tensor, n_rep: int, num_key_value_heads: int,
 
 
 class HookRecorder:
-    def __init__(self):
+    def __init__(self,target_layer: str = "q_proj"):
+        self.target_layer = target_layer
         self.attn_inputs = {}
         self.attn_outputs = {}
         self.handles = []  # Store hook handles 
@@ -68,7 +69,7 @@ class HookRecorder:
         self.handles.clear()
         self.is_registered = False
         
-hook_recorder = HookRecorder()
+
 
 import types
 from torch.nn import Module 

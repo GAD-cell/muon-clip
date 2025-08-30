@@ -16,7 +16,8 @@ tokenizer = AutoTokenizer.from_pretrained(model_name)
 config = AutoConfig.from_pretrained(model_name)
 model = AutoModelForCausalLM.from_pretrained(
     model_name,
-    torch_dtype=torch.bfloat16
+    torch_dtype=torch.bfloat16,
+    cache_dir="/Volumes/Mac_ext/code_projects/model_cache"
 )
 
 
@@ -41,7 +42,7 @@ model.train()
 model, optimizer, _, _ = deepspeed.initialize(
     model=model,
     optimizer=optimizer,
-    config=config
+    config=config,
 )
 
 # === Dummy batch ===

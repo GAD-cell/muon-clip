@@ -13,7 +13,7 @@ model = AutoModelForCausalLM.from_pretrained(
     model_name,
     device_map="auto",  
     torch_dtype=torch.bfloat16,
-    cache_dir="./model_cache"
+    cache_dir="/Volumes/Mac_ext/code_projects/model_cache"
 )
 muonconfig = MuonConfig()
 optimizer = MuonClip(model, config, muonconfig)

@@ -7,7 +7,7 @@ import wandb
 from typing import Tuple
 from dataclasses import dataclass
 
-from utils_muon import adam_update, muon_update, hook_recorder, repeat_kv, override_model
+from utils_muon import adam_update, muon_update, HookRecorder, repeat_kv, override_model
 
 import os
 
@@ -21,6 +21,7 @@ class MuonConfig:
     muon_decay: float = 0.0
     
     enable_clipping: bool = True
+    clipping_layers_mapping = {"q_proj":"q_proj","k_proj":"k_proj"} # If using a special model with non standard q_proj and k_proj names. Just change the value to the desired name.
     clipping_threshold: float = 50.0
     clipping_alpha: float = 0.5
 
@@ -30,7 +31,7 @@ class MuonConfig:
     adam_eps: float = 1e-10
 
     log_max_logits:bool = True
-    better_ortho:bool = True # Use CANS orthogonalization
+    better_ortho:bool = False # Experimental: Use CANS orthogonalization. Suggest to disable it for now.
 
 
 
@@ -68,8 +69,10 @@ class MuonClip(Optimizer):
 
     def __init__(self, model, model_config, muon_config: MuonConfig):
         self.enable_clipping = muon_config.enable_clipping
-        #found_layer = hook_recorder.register_input_hook(model)  # q_proj / k_proj forward hooks
-        override_model(model, hook_recorder)
+        self.clipping_target_mapping = muon_config.clipping_layers_mapping
+        self.hook_recorder = HookRecorder(target_layer=muon_config.clipping_layers_mapping["q_proj"]) # can also be k_proj. Hooks only the input activations. Since q_proj and k_proj have the same input activations it doesn't matter.
+        
+        override_model(model, self.hook_recorder) #make model.eval() and model.train() disable and activate hooks
         found_layer = True
         if not found_layer:
             print("Warning: unable to find q_proj and k_proj layers. No clipping applied.")
@@ -88,7 +91,7 @@ class MuonClip(Optimizer):
 
         for name, p in model.named_parameters():
             m = re.search(r"\d+", name) #add layer id for clipping later
-            layer_idx = (int(m.group(0)), "q_proj" if "q_proj" in name else "k_proj") if m and ("q_proj" in name or "k_proj" in name) else None
+            layer_idx = (int(m.group(0)), "q_proj" if self.clipping_target_mapping["q_proj"] in name else "k_proj") if m and (self.clipping_target_mapping["q_proj"] in name or self.clipping_target_mapping["k_proj"] in name) else None # (layer_idx, q_proj/k_proj or None if neither)
 
             if p.ndim == 2:
                 muon_group.append((layer_idx, p))
@@ -147,7 +150,7 @@ class MuonClip(Optimizer):
         Otherwise, it applies Adam updates to all parameters.
         Check if distributed training is initialized and use the appropriate step function.
         """
-        if is_deepspeed():
+        if is_deepspeed() or torch.distributed.is_initialized():
             return self.dist_muon_step(closure)
 
         return self.single_muon_step(closure)
@@ -184,7 +187,7 @@ class MuonClip(Optimizer):
                         
                         if self.enable_clipping:
                             if not qk_proj_dic.get(index,None): qk_proj_dic[index] = {}
-                            x = hook_recorder.attn_inputs[index]
+                            x = self.hook_recorder.attn_inputs[index]
                             proj = torch.matmul(x, p.transpose(-2, -1))
                             qk_proj_dic[index][proj_type] = {'param':p, 'proj':proj} 
 
@@ -292,13 +295,13 @@ class MuonClip(Optimizer):
                             index, proj_type = param_name
                             
                             # Skip if hook data not available specially when deepspeed is initialized
-                            if index not in hook_recorder.attn_inputs:
+                            if index not in self.hook_recorder.attn_inputs:
                                 continue
                                 
                             if index not in qk_proj_dic:
                                 qk_proj_dic[index] = {}
                             
-                            x = hook_recorder.attn_inputs[index]
+                            x = self.hook_recorder.attn_inputs[index]
                             proj = torch.matmul(x, p.to(dtype=x.dtype).transpose(-2, -1))
                             qk_proj_dic[index][proj_type] = {'param': p, 'proj': proj}
                     
