@@ -130,7 +130,7 @@ class MuonClip(Optimizer):
             state = self.state[p]
             if len(state) == 0:
                 state["momentum_buffer"] = torch.zeros_like(p)
-            update = muon_update(p.grad, state["momentum_buffer"], beta=group["momentum"],better_ortho=self.better_ortho)
+            update = muon_update(p.grad, state["momentum_buffer"], beta=group["momentum"], ns_steps=self.ns_steps, better_ortho=self.better_ortho)
             p.mul_(1 - group["lr"] * group["weight_decay"])
             p.add_(update.reshape(p.shape), alpha=-group["lr"])
         dist.broadcast(p.data, src=idx % world_size, async_op=True)
