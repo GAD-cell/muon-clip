@@ -3,3 +3,4 @@ deepspeed
 accelerate
 torch
 wandb
+tensorboard

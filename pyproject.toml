@@ -14,7 +14,8 @@ dependencies = [
     "accelerate",
     "deepspeed",
     "torch",
-    "wandb"
+    "wandb",
+    "tensorboard"
 ]
 
 [tool.uv]

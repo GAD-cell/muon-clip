@@ -1,6 +1,7 @@
 import torch
 from torch.optim import Optimizer
 import torch.distributed as dist
+from torch.utils.tensorboard import SummaryWriter
 
 import re
 import wandb
@@ -32,6 +33,7 @@ class MuonConfig:
     adam_eps: float = 1e-10
 
     log_max_logits:bool = True
+    log_dir: str = "./logs"
     better_ortho:bool = False # Experimental: Use CANS orthogonalization. Suggest to disable it for now.
 
     
@@ -74,11 +76,7 @@ class MuonClip(Optimizer):
         self.clipping_target_mapping = muon_config.clipping_layers_mapping
         self.hook_recorder = HookRecorder(target_layer=muon_config.clipping_layers_mapping["q_proj"]) # can also be k_proj. Hooks only the input activations. Since q_proj and k_proj have the same input activations it doesn't matter.
         
-        override_model(model, self.hook_recorder) #make model.eval() and model.train() disable and activate hooks
-        found_layer = True
-        if not found_layer:
-            print("Warning: unable to find q_proj and k_proj layers. No clipping applied.")
-            self.enable_clipping = False
+        override_model(model, self.hook_recorder) #make model.eval() and model.train() disable/activate hooks
 
         self.t = muon_config.clipping_threshold
         self.alpha = muon_config.clipping_alpha
@@ -88,10 +86,13 @@ class MuonClip(Optimizer):
         self.zero_stage = 0 # Zero stage for distributed training
         self.ns_steps = muon_config.ns_steps 
         self.better_ortho = muon_config.better_ortho
+        
+        self._metrics = {}
+        self.writer = SummaryWriter(log_dir=muon_config.log_dir)
+        self._step = 0
 
         muon_group = []
         adam_group = []
-
         for name, p in model.named_parameters():
             m = re.search(r"\d+", name) #add layer id for clipping later
             layer_idx = (int(m.group(0)), "q_proj" if self.clipping_target_mapping["q_proj"] in name else "k_proj") if m and (self.clipping_target_mapping["q_proj"] in name or self.clipping_target_mapping["k_proj"] in name) else None # (layer_idx, q_proj/k_proj or None if neither)
@@ -119,6 +120,18 @@ class MuonClip(Optimizer):
         }
 
         super().__init__([muon_dic, adam_dic], {})
+
+    def flush_metrics(self):
+        if not self._metrics:
+            return
+
+        if wandb.run is not None:
+            wandb.log(self._metrics, commit=False)
+
+        for key, val in self._metrics.items():
+            self.writer.add_scalar(key, val, global_step=self._step)
+        
+        self._metrics.clear()
 
     def _stage_zero_muon_update(self,p:torch.Tensor, group:dict, idx:int, world_size:int, rank:int)-> None:
         if p.grad is None:
@@ -257,8 +270,9 @@ class MuonClip(Optimizer):
             k = k.transpose(-2,-1)
             k_param.data.copy_(k.clone())      
 
-        if wandb.run is not None:
-            wandb.log({"max_logits": global_max.item()}, commit=False)  
+        self._metrics["train/max_logits"] = global_max
+        self.flush_metrics()
+        self._step += 1
 
         return loss
 
@@ -332,6 +346,9 @@ class MuonClip(Optimizer):
                 # Synchronize all parameters across ranks
                 for i, p in enumerate(params):
                     dist.broadcast(p.data, src=i % world_size)
+            
+            if dist.get_rank == 0:
+                self._step += 1
 
         return loss
 
@@ -399,7 +416,7 @@ class MuonClip(Optimizer):
         dist.reduce(global_max,  dst=0, op=dist.ReduceOp.MAX)
         if rank == 0:
             global_max = global_max.item()
-            if wandb.run is not None:
-                wandb.log({"max_logits": global_max}, commit=False)
-
+            self._metrics["train/max_logits"] = global_max
+            self.flush_metrics()
+            
 

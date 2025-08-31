@@ -56,8 +56,10 @@ class HookRecorder:
             #     handle_out = module.register_forward_hook(self.make_proj_output_hook(layer_idx, proj_type))
             #     self.handles.append(handle_out)
 
-                self.found_layer = True
+                found_layer = True
         print(f"Hooked {len(self.handles)} layers")
+        if not found_layer:
+            print("Warning: unable to find q_proj and k_proj layers. No clipping applied.")
         self.is_registered = True
 
         return 
