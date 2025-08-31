@@ -88,7 +88,7 @@ class MuonClip(Optimizer):
         self.better_ortho = muon_config.better_ortho
         
         self._metrics = {}
-        self.writer = SummaryWriter(log_dir=muon_config.log_dir)
+        if not muon_config.log_dir : self.writer = SummaryWriter(log_dir=muon_config.log_dir)
         self._step = 0
 
         muon_group = []

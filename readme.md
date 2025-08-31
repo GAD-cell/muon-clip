@@ -8,6 +8,7 @@ This repository presents an implementation of the Muon optimizer, enhanced with 
 - **Esasy to use**: Designed to integrate seamlessly with existing transformer and pytorch architectures. Designed to be used as a regular pytorch optimizer.
 - **Scalability**: Optimized for large-scale training scenarios and implemented for DDP training.
 - **Efficient orthogonalization**: Designed to improve gradients orthogonalization via CANS method, a better newton-shulz iteration with eigenvalues interval estimation and chebychev polynomials. (**Experimental**)
+- **Metrics Logs**: Use W&B or tensorboard to monitor QK-clipping
 ## QK-Clipping Explained
 
 QK-Clipping is a technique that addresses the issue of exploding attention logits in transformer models. By rescaling the query and key matrices during training, QK-Clipping ensures that the attention scores remain within a stable range, preventing instability and promoting smoother convergence. This method was instrumental in the pre-training of Kimi K2 on 15.5 trillion tokens without any loss spikes.
@@ -45,6 +46,7 @@ muon_config = MuonConfig(
     adam_decay: float = 0.0
     adam_eps: float = 1e-10
 
+    log_dir: str = "./logs" # save metrics for tensorboard. Leave it empty to disable. 
     better_ortho:bool = False # Experimental: Use CANS orthogonalization. Suggest to disable it for now (It's not optimized at all).
 )
 
