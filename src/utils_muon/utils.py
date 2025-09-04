@@ -2,6 +2,9 @@ import torch
 import re
 from typing import Tuple,List
 
+class OrthoPolynomials:
+    init_polynomials = []
+    init_interval = (None, None)
 
 def gelfand_upper_bound(X:torch.Tensor, k:int=2, eps:float=1e-7) -> (torch.tensor, torch.Tensor):
     norm = torch.norm(X,dim=(-1, -2)) + eps
@@ -16,7 +19,7 @@ def gelfand_upper_bound(X:torch.Tensor, k:int=2, eps:float=1e-7) -> (torch.tenso
     return Y/upper_bound, A
 
 
-def cans_ortho(X:torch.Tensor, s_interval:Tuple[float,float], poly_degrees:List[int]) -> torch.Tensor:
+def cans_ortho(X:torch.Tensor, s_interval:Tuple[float,float],ortho_polynomials, poly_degrees:List[int]) -> torch.Tensor:
     """
     Apply Chebyshev polynomial approximation to orthogonalize a matrix X.
     
@@ -29,16 +32,20 @@ def cans_ortho(X:torch.Tensor, s_interval:Tuple[float,float], poly_degrees:List[
         torch.Tensor: Orthogonalized tensor.
     """
     a = s_interval[0]
-    if not a:
-        X, a, b = delta_ortho(X, s_interval[1], poly_degrees)
-        s_interval = (a, b)
+    if not a and not ortho_polynomials.init_polynomials:
+        ortho_polynomials.init_polynomials, a, b = delta_ortho(poly_degrees=poly_degrees, b=s_interval[1])
+        ortho_polynomials.init_interval = (a, b)
 
+    if ortho_polynomials.init_polynomials:
+        for i in range(len(ortho_polynomials.init_polynomials)):
+            X = ortho_polynomials.init_polynomials[i][2] * X + ortho_polynomials.init_polynomials[i][0] * X @ X.T @ X
+            s_interval = ortho_polynomials.init_interval
 
     for i in range(len(poly_degrees)):
         if poly_degrees[i] == 3:
             poly, error = order_three_poly(s_interval) # use special formula for degree 3
             s_interval = (1-error, 1+error)
-            X = poly[1] * X + poly[3] * X @ X.T @ X
+            X = poly[2] * X + poly[0] * X @ X.T @ X
         else :
             poly, error = remez(s_interval, poly_degrees[i])
             s_interval = (1-error, 1+error)
@@ -47,28 +54,26 @@ def cans_ortho(X:torch.Tensor, s_interval:Tuple[float,float], poly_degrees:List[
     return X  
 
 
-def delta_ortho(X:torch.Tensor, poly_degrees:List[int], b:float=1.99, max_step:int=10, delta:float=0.99, eps:float=1e-7) -> torch.Tensor:
-    """
-
-    """
-
+def delta_ortho(poly_degrees:List[int], b:float=1.99, max_step:int=100, delta:float=0.3, eps:float=1e-7) -> torch.Tensor:
     l,r = 0, b
     error = 1
-    while abs(delta-error) > eps: #do first round,if doesn't fall in the range, then starts again with new boundaries that we know are too conservative
+    count = 0
+    while abs(delta-error) > eps and count < max_step: #do first round,if doesn't fall in the range, then starts again with new boundaries that we know are too conservative
+        print(error)
         a,b = (l+r)/2,b
         polynomials = []
         for i in range(len(poly_degrees)):
             poly, error = remez((a,b), poly_degrees[i])
             a,b = (1-error), (1+error)
             polynomials.append(poly)
-
         if error < delta:
             r = (l+r)/2
         else:
             l = (l+r)/2
+        count += 1
     a,b = 1-delta, 1+delta
-    X = compose_polynomials_optimized(polynomials, X)
-    return X  
+    
+    return polynomials, a , b  
 
 def order_three_poly(s_interval: Tuple[float,float]) -> Tuple[List[float], float]:
     """
@@ -96,23 +101,160 @@ def order_three_poly(s_interval: Tuple[float,float]) -> Tuple[List[float], float
     
     error = (2 * e**3 - A**2 * B - B**2 * A) / (2 * e**3 + A**2 * B + B**2 * A)
     
-    poly = [delta, gamma, beta, alpha]
+    poly = [alpha, beta, gamma, delta]  
     return poly, error
 
-def remez(s_interval:Tuple[float,float], poly_degree:int):
-    """
-    Compute the Remez coefficients for Chebyshev polynomial approximation. Approximates the constant function 1 on the interval [s_interval[0], s_interval[1]].
-    
-    Args:
-        s_interval (Tuple[float, float]): Interval for Chebyshev approximation.
-        poly_degree (int): Degree of the Chebyshev polynomial.
-        
-    Returns:
-        List[float]: Coefficients of the Chebyshev polynomial.
-    """
-    # Placeholder for actual implementation
-    pass
+from typing import Tuple, List
+import numpy as np
+import math
 
+def c_n_k(n, k):
+    # version robuste/entière
+    return math.comb(n, k)
+
+
+# ---------------------------------------------------------------------
+# Kovarik (formule de secours si le système linéaire devient singulier)
+# Zdislav Kovarik, "Some Iterative Methods for Improving Orthonormality", 1970
+# ---------------------------------------------------------------------
+def kovarik_formula(degree: int) -> np.poly1d:
+    p = np.zeros(degree + 1, dtype=float)
+    p[1] += 1.0  # coefficient de x^1
+    a = 1.0
+    for i in range(1, (degree + 1) // 2):
+        for j in range(2 * (i - 1) + 1, 2 * i + 1):
+            a *= j / 2
+        a /= i ** 2
+        sign = 1.0
+        for k in range(0, i + 1):
+            p[2 * k + 1] += a * sign * c_n_k(i, k)
+            sign *= -1.0
+    return np.poly1d(p[::-1])
+
+
+
+
+_A, _B = None, None   
+def get_polynomial(Ext: np.ndarray) -> np.ndarray:
+    """
+    Construit et résout le système d'équirépartition de l'erreur :
+        sum_{k=1..n} a_k x^{2k-1} - 1 = s_i * E  sur les n+1 points 'Ext'
+    où s_i = (-1)^i (alternance des signes).
+    Retourne le vecteur c = [a_1, a_3, ..., a_{2n-1}, E].
+    """
+    n = len(Ext) - 1
+    A = np.zeros((n + 1, n + 1), dtype=float)
+    b = np.ones(n + 1, dtype=float)
+    for i, x in enumerate(Ext):
+        # colonnes pour x^1, x^3, ..., x^{2n-1}
+        for k in range(n):
+            A[i, k] = x ** (2 * (k + 1) - 1)
+        # colonne de l'erreur alternée
+        A[i, n] = (+1.0 if (i % 2 == 0) else -1.0)
+    # résolution
+    c = np.linalg.solve(A, b)
+    return c  # longueur n+1
+
+
+def get_ext(a_odd: np.ndarray) -> np.ndarray:
+    """
+    À partir des coefficients 'a_odd' (a1, a3, ..., a_{2n-1}),
+    on construit p(x) = sum a_{2k-1} x^{2k-1}, on dérive p'(x),
+    puis on récupère ses racines réelles dans l’intervalle (_A, _B).
+    Ce sont (en pratique) les n-1 nouveaux points extrémaux internes.
+    """
+    n = len(a_odd)
+    if n <= 1:
+        return np.array([], dtype=float)
+
+    # Coefficients du polynôme p en ordre décroissant pour np.poly1d
+    # Taille 2n (degré max 2n-1). Les positions correspondant aux
+    # puissances paires restent nulles, les impaires prennent a_odd.
+    coeffs = np.zeros(2 * n, dtype=float)  # indices 0..2n-1 (deg 2n-1 down to 0)
+    # pour k=0..n-1, terme a_{2k+1} * x^{2k+1}
+    # index dans 'coeffs' (ordre décroissant) pour x^{deg} est: idx = (2n-1) - deg
+    for k in range(n):
+        deg = 2 * k + 1
+        idx = (2 * n - 1) - deg
+        coeffs[idx] = a_odd[k]
+
+    p = np.poly1d(coeffs)
+    dp = np.polyder(p)
+
+    roots = np.roots(dp)
+    real_roots = roots[np.isclose(roots.imag, 0.0, atol=1e-12)].real
+    if _A <= _B:
+        mask = (real_roots > _A) & (real_roots < _B)
+        inside = real_roots[mask]
+        inside.sort()
+        inside = inside[::-1]
+    else:
+        mask = (real_roots > _B) & (real_roots < _A)
+        inside = real_roots[mask]
+        inside.sort()
+
+    return inside
+
+
+def remez_step(Ext: np.ndarray):
+    n = len(Ext) - 1
+    c = get_polynomial(Ext)              
+    a_odd = c[:n]
+    coeffs = [a_odd[j // 2 - 1] if j % 2 == 0 else 0.0 for j in range(1, 2 * n + 1)]
+    p = np.poly1d(coeffs[::-1])
+    e = c[n].item()
+    NewExt = np.concatenate(([Ext[0]], get_ext(a_odd), [Ext[-1]]))
+    f = lambda x: np.abs(p(x) - 1.0)
+    newe = np.max(f(NewExt))
+    return p, NewExt, e, newe
+
+
+def remez_core(A: float, B: float, degree: int):
+    """
+    Remez pour approximer f(x) = 1 sur [A,B] par un polynôme aux puissances impaires
+    de degré <= degree (donc degré effectif 2n-1 avec n=(degree+1)//2).
+    Retourne (poly1d, erreur_max).
+    """
+    global _A, _B
+    _A, _B = (min(A, B), max(A, B))
+
+
+    if degree == 0:
+        return np.poly1d([1.0]), 0.0
+
+    n = (degree + 1) // 2
+
+    Ext = np.linspace(B, A, n + 1, dtype=np.float64)
+    p = np.poly1d([0.0])
+    newe = 0.0
+
+    for _ in range(100):
+        try:
+            p, NewExt, e, newe = remez_step(Ext)
+        except np.linalg.LinAlgError:
+            return kovarik_formula(degree), 0.0
+        if newe < abs(e) + 1e-20:
+            return p, float(newe)
+        Ext = np.array(NewExt, dtype=np.float64)
+
+    return p, float(newe)
+
+def remez(s_interval: Tuple[float, float], poly_degree: int) -> List[float]:
+    """
+    Compute the Remez coefficients (minimax) to approximate f(x)=1 on [A,B]
+    with an odd-power polynomial subspace (x, x^3, ..., x^{2n-1}).
+
+    Args:
+        s_interval: (A, B) interval
+        poly_degree: requested degree bound (the effective degree becomes 2n-1 with n=(degree+1)//2)
+
+    Returns:
+        List[float]: coefficients of the polynomial in descending order (for np.polyval).
+    """
+    A, B = s_interval
+    p, _err = remez_core(A, B, poly_degree)
+    # np.poly1d.c already renvoie l'ordre décroissant (du plus haut degré au terme constant)
+    return p.c.astype(float).tolist(), _err
 
 def tensor_power(X, degree):
     """
@@ -155,7 +297,7 @@ def evaluate_polynomial(coefficients, X):
     
     return result
 
-def newton_schulz_accelerated(G:torch.Tensor, poly_degree:List[float]=None, order:int=3, estimate_lower_bound:int=False, lower_bound=1e-3, iter:int=9) -> torch.Tensor:
+def newton_schulz_accelerated(G:torch.Tensor,  ortho_polynomials, poly_degree:List[float]=None, order:int=3, estimate_lower_bound:bool=False, lower_bound=1e-3, iter:int=9) -> torch.Tensor:
 
     G, A = gelfand_upper_bound(G)
     if estimate_lower_bound: s_interval = (None, 1)
@@ -164,7 +306,7 @@ def newton_schulz_accelerated(G:torch.Tensor, poly_degree:List[float]=None, orde
     if poly_degree is None:
         poly_degree = [order] * iter
     
-    X = cans_ortho(G, s_interval, poly_degree)
+    X = cans_ortho(G, s_interval,ortho_polynomials, poly_degree)
     return X
 
 def newtonschulz(G, steps=5, eps=1e-7):
@@ -186,7 +328,7 @@ def adam_update(grad, buf1, buf2, step, betas, eps):
     return buf1c / (buf2c.sqrt() + eps)
 
 
-def muon_update(grad, momentum, beta:float=0.95, ns_steps:int=5, nesterov:bool=True, better_ortho:bool=False):
+def muon_update(grad, momentum,ortho_polynomials, beta:float=0.95, ns_steps:int=5, nesterov:bool=True, better_ortho:bool=False):
     if grad.ndim != 2:
         raise ValueError(f"Input tensor must be 2D but got shape {grad.shape}")
     
@@ -197,7 +339,7 @@ def muon_update(grad, momentum, beta:float=0.95, ns_steps:int=5, nesterov:bool=T
 
     is_transpose = grad.size(0) > grad.size(1)
     if is_transpose: grad = grad.T  
-    if better_ortho: grad = newton_schulz_accelerated(grad, iter=ns_steps)
+    if better_ortho: grad = newton_schulz_accelerated(grad, iter=ns_steps, ortho_polynomials=ortho_polynomials)
     else: grad = newtonschulz(grad, steps=ns_steps)
     grad *= max(1, grad.size(-2) / grad.size(-1))**0.5
     if is_transpose: grad = grad.T
