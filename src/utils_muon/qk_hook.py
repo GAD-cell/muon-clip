@@ -57,9 +57,9 @@ class HookRecorder:
             #     self.handles.append(handle_out)
 
                 found_layer = True
-        print(f"Hooked {len(self.handles)} layers")
+        print(f"Muon-clip: Hooked {len(self.handles)} layers")
         if not found_layer:
-            print("Warning: unable to find q_proj and k_proj layers. No clipping applied.")
+            print("Muon-clip Warning: unable to find q_proj and k_proj layers. No clipping applied.")
         self.is_registered = True
 
         return 
@@ -67,7 +67,7 @@ class HookRecorder:
     def remove_hooks(self):
         for handle in self.handles:
             handle.remove()
-        print(f"Removed {len(self.handles)} hooks across {len(self.handles) // 3} layers.")
+        print(f"Muon-clip: Removed {len(self.handles)} hooks across {len(self.handles) // 3} layers.")
         self.handles.clear()
         self.is_registered = False
         

@@ -8,7 +8,7 @@ import wandb
 from typing import Tuple
 from dataclasses import dataclass
 
-from utils_muon import adam_update, muon_update, HookRecorder, repeat_kv, override_model
+from utils_muon import adam_update, muon_update, HookRecorder, repeat_kv, override_model, OrthoPolynomials
 
 import os
 
@@ -35,6 +35,7 @@ class MuonConfig:
     log_max_logits:bool = True
     log_dir: str = "./logs"
     better_ortho:bool = False # Experimental: Use CANS orthogonalization. Suggest to disable it for now.
+    estimate_lower_bound:bool = False
 
     
 
@@ -86,7 +87,9 @@ class MuonClip(Optimizer):
         self.zero_stage = 0 # Zero stage for distributed training
         self.ns_steps = muon_config.ns_steps 
         self.better_ortho = muon_config.better_ortho
-        
+        self.estimate_lower_bound = muon_config.estimate_lower_bound
+        self.ortho_polynomials = OrthoPolynomials()
+
         self._metrics = {}
         if not muon_config.log_dir : self.writer = SummaryWriter(log_dir=muon_config.log_dir)
         self._step = 0
@@ -189,7 +192,7 @@ class MuonClip(Optimizer):
                     state = self.state[p]
                     if len(state) == 0:
                         state["momentum_buffer"] = torch.zeros_like(p)
-                    update = muon_update(p.grad, state["momentum_buffer"], beta=group["momentum"], ns_steps=self.ns_steps, better_ortho=self.better_ortho)
+                    update = muon_update(p.grad, state["momentum_buffer"], beta=group["momentum"],ortho_polynomials=self.ortho_polynomials, ns_steps=self.ns_steps, better_ortho=self.better_ortho)
                     p.mul_(1 - group["lr"] * group["weight_decay"])
                     p.add_(update.reshape(p.shape), alpha=-group["lr"])
                 
