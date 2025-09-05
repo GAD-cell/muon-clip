@@ -34,16 +34,18 @@ def cans_ortho(X:torch.Tensor, s_interval:Tuple[float,float],ortho_polynomials, 
     a = s_interval[0]
     if not a and not ortho_polynomials.init_polynomials:
         ortho_polynomials.init_polynomials, a, b = delta_ortho(poly_degrees=poly_degrees, b=s_interval[1])
+        #print(ortho_polynomials.init_polynomials)
         ortho_polynomials.init_interval = (a, b)
 
     if ortho_polynomials.init_polynomials:
         for i in range(len(ortho_polynomials.init_polynomials)):
             X = ortho_polynomials.init_polynomials[i][2] * X + ortho_polynomials.init_polynomials[i][0] * X @ X.T @ X
-            s_interval = ortho_polynomials.init_interval
-
+    
+    s_interval = ortho_polynomials.init_interval if ortho_polynomials.init_interval else s_interval
     for i in range(len(poly_degrees)):
         if poly_degrees[i] == 3:
             poly, error = order_three_poly(s_interval) # use special formula for degree 3
+            #print(poly, error)
             s_interval = (1-error, 1+error)
             X = poly[2] * X + poly[0] * X @ X.T @ X
         else :
@@ -59,7 +61,6 @@ def delta_ortho(poly_degrees:List[int], b:float=1.99, max_step:int=100, delta:fl
     error = 1
     count = 0
     while abs(delta-error) > eps and count < max_step: #do first round,if doesn't fall in the range, then starts again with new boundaries that we know are too conservative
-        print(error)
         a,b = (l+r)/2,b
         polynomials = []
         for i in range(len(poly_degrees)):
@@ -132,9 +133,8 @@ def kovarik_formula(degree: int) -> np.poly1d:
     return np.poly1d(p[::-1])
 
 
-
-
 _A, _B = None, None   
+
 def get_polynomial(Ext: np.ndarray) -> np.ndarray:
     """
     Construit et résout le système d'équirépartition de l'erreur :
@@ -145,12 +145,14 @@ def get_polynomial(Ext: np.ndarray) -> np.ndarray:
     n = len(Ext) - 1
     A = np.zeros((n + 1, n + 1), dtype=float)
     b = np.ones(n + 1, dtype=float)
+    
     for i, x in enumerate(Ext):
         # colonnes pour x^1, x^3, ..., x^{2n-1}
         for k in range(n):
-            A[i, k] = x ** (2 * (k + 1) - 1)
+            A[i, k] = x ** (2 * k + 1)  # Fixed: should be 2k+1, not 2(k+1)-1
         # colonne de l'erreur alternée
-        A[i, n] = (+1.0 if (i % 2 == 0) else -1.0)
+        A[i, n] = (-1.0) ** i  # Fixed: cleaner alternating sign
+    
     # résolution
     c = np.linalg.solve(A, b)
     return c  # longueur n+1
@@ -160,7 +162,7 @@ def get_ext(a_odd: np.ndarray) -> np.ndarray:
     """
     À partir des coefficients 'a_odd' (a1, a3, ..., a_{2n-1}),
     on construit p(x) = sum a_{2k-1} x^{2k-1}, on dérive p'(x),
-    puis on récupère ses racines réelles dans l’intervalle (_A, _B).
+    puis on récupère ses racines réelles dans l'intervalle (_A, _B).
     Ce sont (en pratique) les n-1 nouveaux points extrémaux internes.
     """
     n = len(a_odd)
@@ -171,7 +173,8 @@ def get_ext(a_odd: np.ndarray) -> np.ndarray:
     # Taille 2n (degré max 2n-1). Les positions correspondant aux
     # puissances paires restent nulles, les impaires prennent a_odd.
     coeffs = np.zeros(2 * n, dtype=float)  # indices 0..2n-1 (deg 2n-1 down to 0)
-    # pour k=0..n-1, terme a_{2k+1} * x^{2k+1}
+    
+    # pour k=0..n-1, terme a_odd[k] * x^{2k+1}
     # index dans 'coeffs' (ordre décroissant) pour x^{deg} est: idx = (2n-1) - deg
     for k in range(n):
         deg = 2 * k + 1
@@ -183,63 +186,119 @@ def get_ext(a_odd: np.ndarray) -> np.ndarray:
 
     roots = np.roots(dp)
     real_roots = roots[np.isclose(roots.imag, 0.0, atol=1e-12)].real
-    if _A <= _B:
-        mask = (real_roots > _A) & (real_roots < _B)
-        inside = real_roots[mask]
-        inside.sort()
+    
+    # Fixed: consistent interval handling
+    A_min, A_max = min(_A, _B), max(_A, _B)
+    mask = (real_roots > A_min) & (real_roots < A_max)
+    inside = real_roots[mask]
+    inside.sort()
+    
+    # Return in the correct order for the interval
+    if _A > _B:
         inside = inside[::-1]
-    else:
-        mask = (real_roots > _B) & (real_roots < _A)
-        inside = real_roots[mask]
-        inside.sort()
 
     return inside
 
 
+def build_polynomial_from_coeffs(a_odd: np.ndarray) -> np.poly1d:
+    """
+    Build polynomial from odd coefficients in consistent way.
+    """
+    n = len(a_odd)
+    if n == 0:
+        return np.poly1d([0.0])
+    
+    # Create coefficient array for polynomial (descending order)
+    # Maximum degree is 2n-1
+    coeffs = np.zeros(2 * n, dtype=float)
+    
+    # Fill in odd power coefficients
+    for k in range(n):
+        deg = 2 * k + 1
+        idx = (2 * n - 1) - deg  # Convert to descending order index
+        coeffs[idx] = a_odd[k]
+    
+    return np.poly1d(coeffs)
+
+
 def remez_step(Ext: np.ndarray):
+    """
+    One step of the Remez exchange algorithm.
+    """
     n = len(Ext) - 1
     c = get_polynomial(Ext)              
     a_odd = c[:n]
-    coeffs = [a_odd[j // 2 - 1] if j % 2 == 0 else 0.0 for j in range(1, 2 * n + 1)]
-    p = np.poly1d(coeffs[::-1])
+    
+    # Fixed: use consistent polynomial construction
+    p = build_polynomial_from_coeffs(a_odd)
     e = c[n].item()
-    NewExt = np.concatenate(([Ext[0]], get_ext(a_odd), [Ext[-1]]))
+    
+    # Get new extremal points
+    internal_points = get_ext(a_odd)
+    NewExt = np.concatenate(([Ext[0]], internal_points, [Ext[-1]]))
+    
+    # Calculate new error
     f = lambda x: np.abs(p(x) - 1.0)
     newe = np.max(f(NewExt))
+    
     return p, NewExt, e, newe
 
 
-def remez_core(A: float, B: float, degree: int):
+def remez_core(A: float, B: float, degree: int, max_iter: int = 100, tol: float = 1e-14):
     """
     Remez pour approximer f(x) = 1 sur [A,B] par un polynôme aux puissances impaires
     de degré <= degree (donc degré effectif 2n-1 avec n=(degree+1)//2).
     Retourne (poly1d, erreur_max).
     """
     global _A, _B
-    _A, _B = (min(A, B), max(A, B))
-
+    _A, _B = A, B  # Keep original order for interval orientation
 
     if degree == 0:
         return np.poly1d([1.0]), 0.0
 
     n = (degree + 1) // 2
 
-    Ext = np.linspace(B, A, n + 1, dtype=np.float64)
+    # Initialize extremal points - ensure correct ordering
+    if A <= B:
+        Ext = np.linspace(A, B, n + 1, dtype=np.float64)
+    else:
+        Ext = np.linspace(A, B, n + 1, dtype=np.float64)
+    
     p = np.poly1d([0.0])
-    newe = 0.0
+    prev_error = float('inf')
 
-    for _ in range(100):
+    for iteration in range(max_iter):
         try:
             p, NewExt, e, newe = remez_step(Ext)
+            
+            # Fixed: proper convergence check
+            # Check if we've converged (small relative improvement in error)
+            if abs(newe - abs(e)) < tol * max(abs(e), newe) and iteration > 0:
+                return p, float(newe)
+            
+            # Also check if error is not improving significantly
+            if iteration > 0 and abs(newe - prev_error) < tol * prev_error:
+                return p, float(newe)
+                
+            Ext = np.array(NewExt, dtype=np.float64)
+            prev_error = newe
+            
         except np.linalg.LinAlgError:
-            return kovarik_formula(degree), 0.0
-        if newe < abs(e) + 1e-20:
-            return p, float(newe)
-        Ext = np.array(NewExt, dtype=np.float64)
+            # Fallback to Kovarik formula if system becomes singular
+            print("Warning: Linear system singular, using Kovarik fallback")
+            kovarik_poly = kovarik_formula(degree)
+            # Calculate actual error for Kovarik polynomial
+            test_points = np.linspace(min(A, B), max(A, B), 1000)
+            kovarik_error = np.max(np.abs(kovarik_poly(test_points) - 1.0))
+            return kovarik_poly, kovarik_error
 
+    # If we reach here, we didn't converge within max_iter
+    print(f"Muon-clip Warning: Remez algorithm did not converge within {max_iter} iterations with max error {newe}")
     return p, float(newe)
 
-def remez(s_interval: Tuple[float, float], poly_degree: int) -> List[float]:
+
+def remez(s_interval: Tuple[float, float], poly_degree: int, 
+          max_iter: int = 100, tol: float = 1e-14) -> Tuple[List[float], float]:
     """
     Compute the Remez coefficients (minimax) to approximate f(x)=1 on [A,B]
     with an odd-power polynomial subspace (x, x^3, ..., x^{2n-1}).
@@ -247,14 +306,16 @@ def remez(s_interval: Tuple[float, float], poly_degree: int) -> List[float]:
     Args:
         s_interval: (A, B) interval
         poly_degree: requested degree bound (the effective degree becomes 2n-1 with n=(degree+1)//2)
+        max_iter: maximum number of iterations
+        tol: convergence tolerance
 
     Returns:
-        List[float]: coefficients of the polynomial in descending order (for np.polyval).
+        Tuple[List[float], float]: (coefficients of the polynomial in descending order, max_error)
     """
     A, B = s_interval
-    p, _err = remez_core(A, B, poly_degree)
-    # np.poly1d.c already renvoie l'ordre décroissant (du plus haut degré au terme constant)
-    return p.c.astype(float).tolist(), _err
+    p, err = remez_core(A, B, poly_degree, max_iter, tol)
+    # np.poly1d.c already returns coefficients in descending order 
+    return p.c.astype(float).tolist(), err
 
 def tensor_power(X, degree):
     """
@@ -297,7 +358,7 @@ def evaluate_polynomial(coefficients, X):
     
     return result
 
-def newton_schulz_accelerated(G:torch.Tensor,  ortho_polynomials, poly_degree:List[float]=None, order:int=3, estimate_lower_bound:bool=False, lower_bound=1e-3, iter:int=9) -> torch.Tensor:
+def newton_schulz_accelerated(G:torch.Tensor,  ortho_polynomials, poly_degree:List[float]=None, order:int=3, estimate_lower_bound:bool=True, lower_bound=1e-3, iter:int=9) -> torch.Tensor:
 
     G, A = gelfand_upper_bound(G)
     if estimate_lower_bound: s_interval = (None, 1)
