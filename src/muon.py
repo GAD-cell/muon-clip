@@ -75,19 +75,20 @@ class MuonClip(Optimizer):
     def __init__(self, model, model_config, muon_config: MuonConfig):
         self.enable_clipping = muon_config.enable_clipping
         self.clipping_target_mapping = muon_config.clipping_layers_mapping
+        if self.enable_clipping:
+            self.model_config = model_config
+            self.n_rep = model_config.num_attention_heads // model_config.num_key_value_heads
+
         self.hook_recorder = HookRecorder(target_layer=muon_config.clipping_layers_mapping["q_proj"]) # can also be k_proj. Hooks only the input activations. Since q_proj and k_proj have the same input activations it doesn't matter.
-        
         override_model(model, self.hook_recorder) #make model.eval() and model.train() disable/activate hooks
 
         self.t = muon_config.clipping_threshold
         self.alpha = muon_config.clipping_alpha
-        self.model_config = model_config
-        self.muon_config = muon_config
-        self.n_rep = model_config.num_attention_heads // model_config.num_key_value_heads
-        self.zero_stage = 0 # Zero stage for distributed training
+        self.muon_config = muon_config  
         self.ns_steps = muon_config.ns_steps 
         self.better_ortho = muon_config.better_ortho
         self.estimate_lower_bound = muon_config.estimate_lower_bound
+        self.zero_stage = 0 # Zero stage for distributed training
         self.ortho_polynomials = OrthoPolynomials()
 
         self._metrics = {}
@@ -122,7 +123,13 @@ class MuonClip(Optimizer):
             "use_muon": False
         }
 
-        super().__init__([muon_dic, adam_dic], {})
+        param_groups = []
+        if adam_dic and len(list(adam_dic["params"])) > 0:
+            param_groups.append(adam_dic)
+        if muon_dic and len(list(muon_dic["params"])) > 0:
+            param_groups.append(muon_dic)
+
+        super().__init__(param_groups, {})
 
     def flush_metrics(self):
         if not self._metrics:

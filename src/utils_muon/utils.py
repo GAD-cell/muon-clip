@@ -34,16 +34,16 @@ def cans_ortho(X:torch.Tensor, s_interval:Tuple[float,float],ortho_polynomials, 
     a = s_interval[0]
     if not a and not ortho_polynomials.init_polynomials:
         ortho_polynomials.init_polynomials, a, b = delta_ortho(poly_degrees=poly_degrees, b=s_interval[1])
-        #print(ortho_polynomials.init_polynomials)
         ortho_polynomials.init_interval = (a, b)
 
     if ortho_polynomials.init_polynomials:
         for i in range(len(ortho_polynomials.init_polynomials)):
             X = ortho_polynomials.init_polynomials[i][2] * X + ortho_polynomials.init_polynomials[i][0] * X @ X.T @ X
     
-    s_interval = ortho_polynomials.init_interval if ortho_polynomials.init_interval else s_interval
+    s_interval = ortho_polynomials.init_interval if ortho_polynomials.init_interval[0] else s_interval
     for i in range(len(poly_degrees)):
         if poly_degrees[i] == 3:
+
             poly, error = order_three_poly(s_interval) # use special formula for degree 3
             #print(poly, error)
             s_interval = (1-error, 1+error)
@@ -358,7 +358,7 @@ def evaluate_polynomial(coefficients, X):
     
     return result
 
-def newton_schulz_accelerated(G:torch.Tensor,  ortho_polynomials, poly_degree:List[float]=None, order:int=3, estimate_lower_bound:bool=True, lower_bound=1e-3, iter:int=9) -> torch.Tensor:
+def newton_schulz_accelerated(G:torch.Tensor,  ortho_polynomials, poly_degree:List[float]=None, order:int=3, estimate_lower_bound:bool=False, lower_bound=1e-3, iter:int=9) -> torch.Tensor:
 
     G, A = gelfand_upper_bound(G)
     if estimate_lower_bound: s_interval = (None, 1)
@@ -366,13 +366,14 @@ def newton_schulz_accelerated(G:torch.Tensor,  ortho_polynomials, poly_degree:Li
 
     if poly_degree is None:
         poly_degree = [order] * iter
-    
+
     X = cans_ortho(G, s_interval,ortho_polynomials, poly_degree)
     return X
 
 def newtonschulz(G, steps=5, eps=1e-7):
     a, b, c = (3.4445, -4.7750, 2.0315)
     X = G / (G.norm() + eps)
+    
     
     for _ in range(steps):
         A = X @ X.T
