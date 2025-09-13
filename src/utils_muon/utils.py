@@ -389,7 +389,7 @@ def adam_update(grad, buf1, buf2, step, betas, eps):
     return buf1c / (buf2c.sqrt() + eps)
 
 
-def muon_update(grad, momentum,ortho_polynomials, beta:float=0.95, ns_steps:int=5, nesterov:bool=True, better_ortho:bool=False):
+def muon_update(grad, momentum, velocity, eps, step, ortho_polynomials, beta:float=0.95, ns_steps:int=5, nesterov:bool=True, better_ortho:bool=False):
     if grad.ndim != 2:
         raise ValueError(f"Input tensor must be 2D but got shape {grad.shape}")
     
@@ -404,6 +404,10 @@ def muon_update(grad, momentum,ortho_polynomials, beta:float=0.95, ns_steps:int=
     else: grad = newtonschulz(grad, steps=ns_steps)
     grad *= max(1, grad.size(-2) / grad.size(-1))**0.5
     if is_transpose: grad = grad.T
+    
+    velocity.lerp_(torch.linalg.vector_norm(grad,dim=-1,keepdim=True),1-beta)
+    velocity=torch.mul(velocity,1/(1-beta**step))
+    grad = torch.mul(grad,1/torch.sqrt(velocity+eps))
 
     return grad
 

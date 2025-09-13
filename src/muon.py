@@ -110,6 +110,7 @@ class MuonClip(Optimizer):
             "lr": muon_config.muon_lr,
             "momentum": muon_config.muon_momentum,
             "weight_decay": muon_config.muon_decay,
+            "eps": muon_config.adam_eps,
             "use_muon": True
         }
 
@@ -192,7 +193,10 @@ class MuonClip(Optimizer):
                     state = self.state[p]
                     if len(state) == 0:
                         state["momentum_buffer"] = torch.zeros_like(p)
-                    update = muon_update(p.grad, state["momentum_buffer"], beta=group["momentum"],ortho_polynomials=self.ortho_polynomials, ns_steps=self.ns_steps, better_ortho=self.better_ortho)
+                        state["velocity_buffer"] = torch.zeros((p.size(-2),1)).to(p.device)
+                        state["step"] = 0
+                    state["step"] += 1
+                    update = muon_update(p.grad, state["momentum_buffer"],state["velocity_buffer"], step=state["step"], beta=group["momentum"], eps=group["eps"], ortho_polynomials=self.ortho_polynomials, ns_steps=self.ns_steps, better_ortho=self.better_ortho)
                     p.mul_(1 - group["lr"] * group["weight_decay"])
                     p.add_(update.reshape(p.shape), alpha=-group["lr"])
                 
