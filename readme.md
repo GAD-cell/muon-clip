@@ -16,7 +16,7 @@ This repository presents an implementation of the Muon optimizer, enhanced with 
 Here's a basic example:
 
 ```python
-from muon_clip import MuonClip, MuonConfig
+from muon import MuonClip, MuonConfig
 from transformers import AutoConfig
 
 # model config can also be a dic with at least num_key_value_heads,num_attention_heads and head_dim keys
