@@ -8,7 +8,7 @@ import wandb
 from typing import Tuple
 from dataclasses import dataclass
 
-from utils_muon import adam_update, muon_update, HookRecorder, repeat_kv, override_model
+from utils_muon import adam_update, muon_update, HookRecorder, repeat_kv, override_model, OrthoPolynomials
 
 import os
 
@@ -17,24 +17,26 @@ def is_deepspeed():
 
 @dataclass
 class MuonConfig:
-    muon_lr: float = 5e-2
-    muon_momentum: float = 0.95
+
+    lr: float = 1e-4
+
+    muon_beta: float = 0.95
     muon_decay: float = 0.0
     ns_steps:int = 5 #Number of newton-shulz interations. Increase for more precision during orthogonalization
+
+    adam_betas: Tuple[float, float] = (0.9, 0.95)
+    adam_decay: float = 0.0
+    adam_eps: float = 1e-10
 
     enable_clipping: bool = True
     clipping_layers_mapping = {"q_proj":"q_proj","k_proj":"k_proj"} # If using a special model with non standard q_proj and k_proj names. Just change the value to the desired name.
     clipping_threshold: float = 50.0
     clipping_alpha: float = 0.5
 
-    adam_lr: float = 5e-4
-    adam_betas: Tuple[float, float] = (0.9, 0.95)
-    adam_decay: float = 0.0
-    adam_eps: float = 1e-10
-
     log_max_logits:bool = True
     log_dir: str = "./logs"
-    better_ortho:bool = False # Experimental: Use CANS orthogonalization. Suggest to disable it for now.
+    cans_ortho:bool = False # Experimental: Use CANS orthogonalization. Suggest to disable it for now.
+    estimate_lower_bound:bool = False
 
     
 
@@ -74,19 +76,22 @@ class MuonClip(Optimizer):
     def __init__(self, model, model_config, muon_config: MuonConfig):
         self.enable_clipping = muon_config.enable_clipping
         self.clipping_target_mapping = muon_config.clipping_layers_mapping
+        if self.enable_clipping:
+            self.model_config = model_config
+            self.n_rep = model_config.num_attention_heads // model_config.num_key_value_heads
+
         self.hook_recorder = HookRecorder(target_layer=muon_config.clipping_layers_mapping["q_proj"]) # can also be k_proj. Hooks only the input activations. Since q_proj and k_proj have the same input activations it doesn't matter.
-        
         override_model(model, self.hook_recorder) #make model.eval() and model.train() disable/activate hooks
 
         self.t = muon_config.clipping_threshold
         self.alpha = muon_config.clipping_alpha
-        self.model_config = model_config
-        self.muon_config = muon_config
-        self.n_rep = model_config.num_attention_heads // model_config.num_key_value_heads
-        self.zero_stage = 0 # Zero stage for distributed training
+        self.muon_config = muon_config  
         self.ns_steps = muon_config.ns_steps 
-        self.better_ortho = muon_config.better_ortho
-        
+        self.cans_ortho = muon_config.cans_ortho
+        self.estimate_lower_bound = muon_config.estimate_lower_bound
+        self.zero_stage = 0 # Zero stage for distributed training
+        self.ortho_polynomials = OrthoPolynomials()
+
         self._metrics = {}
         if not muon_config.log_dir : self.writer = SummaryWriter(log_dir=muon_config.log_dir)
         self._step = 0
@@ -104,22 +109,29 @@ class MuonClip(Optimizer):
 
         muon_dic = {
             "params": muon_group,
-            "lr": muon_config.muon_lr,
-            "momentum": muon_config.muon_momentum,
+            "lr": muon_config.lr,
+            "beta": muon_config.muon_beta,
             "weight_decay": muon_config.muon_decay,
+            "eps": muon_config.adam_eps,
             "use_muon": True
         }
 
         adam_dic = {
             "params": adam_group,
-            "lr": muon_config.adam_lr,
+            "lr": muon_config.lr,
             "betas": muon_config.adam_betas,
             "eps": muon_config.adam_eps,
             "weight_decay": muon_config.adam_decay,
             "use_muon": False
         }
 
-        super().__init__([muon_dic, adam_dic], {})
+        param_groups = []
+        if adam_dic and len(list(adam_dic["params"])) > 0:
+            param_groups.append(adam_dic)
+        if muon_dic and len(list(muon_dic["params"])) > 0:
+            param_groups.append(muon_dic)
+
+        super().__init__(param_groups, {})
 
     def flush_metrics(self):
         if not self._metrics:
@@ -143,7 +155,7 @@ class MuonClip(Optimizer):
             state = self.state[p]
             if len(state) == 0:
                 state["momentum_buffer"] = torch.zeros_like(p)
-            update = muon_update(p.grad, state["momentum_buffer"], beta=group["momentum"], ns_steps=self.ns_steps, better_ortho=self.better_ortho)
+            update = muon_update(p.grad, state["momentum_buffer"], beta=group["momentum"], ns_steps=self.ns_steps, better_ortho=self.cans_ortho)
             p.mul_(1 - group["lr"] * group["weight_decay"])
             p.add_(update.reshape(p.shape), alpha=-group["lr"])
         dist.broadcast(p.data, src=idx % world_size, async_op=True)
@@ -182,6 +194,7 @@ class MuonClip(Optimizer):
             if group["use_muon"]:
                 qk_proj_dic = {}
                 #old_proj_dic = {}
+                max_global = torch.tensor(0.0)
                 for i,p in enumerate(group["params"]):
                     if p.grad is None:
                         # continue
@@ -189,7 +202,11 @@ class MuonClip(Optimizer):
                     state = self.state[p]
                     if len(state) == 0:
                         state["momentum_buffer"] = torch.zeros_like(p)
-                    update = muon_update(p.grad, state["momentum_buffer"], beta=group["momentum"], ns_steps=self.ns_steps, better_ortho=self.better_ortho)
+                        state["velocity_buffer"] = torch.zeros((p.size(-2),1)).to(p.device)
+                        state["step"] = 0
+                    state["step"] += 1
+                    if state["velocity_buffer"].max() > max_global: max_global = state["velocity_buffer"].max()
+                    update = muon_update(p.grad, state["momentum_buffer"],state["velocity_buffer"], step=state["step"], beta=group["beta"], eps=group["eps"], ortho_polynomials=self.ortho_polynomials, ns_steps=self.ns_steps, cans_ortho=self.cans_ortho)
                     p.mul_(1 - group["lr"] * group["weight_decay"])
                     p.add_(update.reshape(p.shape), alpha=-group["lr"])
                 
@@ -206,7 +223,7 @@ class MuonClip(Optimizer):
                             x = self.hook_recorder.attn_inputs[index]
                             proj = torch.matmul(x, p.transpose(-2, -1))
                             qk_proj_dic[index][proj_type] = {'param':p, 'proj':proj} 
-
+                #print(max_global)
 
             else: #Adam
                 for p in group["params"]:
