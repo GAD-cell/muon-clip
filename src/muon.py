@@ -193,8 +193,6 @@ class MuonClip(Optimizer):
         for group in self.param_groups:
             if group["use_muon"]:
                 qk_proj_dic = {}
-                #old_proj_dic = {}
-                max_global = torch.tensor(0.0)
                 for i,p in enumerate(group["params"]):
                     if p.grad is None:
                         # continue
@@ -205,7 +203,6 @@ class MuonClip(Optimizer):
                         state["velocity_buffer"] = torch.zeros((p.size(-2),1)).to(p.device)
                         state["step"] = 0
                     state["step"] += 1
-                    if state["velocity_buffer"].max() > max_global: max_global = state["velocity_buffer"].max()
                     update = muon_update(p.grad, state["momentum_buffer"],state["velocity_buffer"], step=state["step"], beta=group["beta"], eps=group["eps"], ortho_polynomials=self.ortho_polynomials, ns_steps=self.ns_steps, cans_ortho=self.cans_ortho)
                     p.mul_(1 - group["lr"] * group["weight_decay"])
                     p.add_(update.reshape(p.shape), alpha=-group["lr"])
