@@ -17,8 +17,10 @@ def is_deepspeed():
 
 @dataclass
 class MuonConfig:
-    muon_lr: float = 5e-2
-    muon_momentum: float = 0.95
+
+    lr: float = 1e-4
+
+    muon_beta: float = 0.95
     muon_decay: float = 0.0
     ns_steps:int = 5 #Number of newton-shulz interations. Increase for more precision during orthogonalization
 
@@ -108,8 +110,8 @@ class MuonClip(Optimizer):
 
         muon_dic = {
             "params": muon_group,
-            "lr": muon_config.muon_lr,
-            "momentum": muon_config.muon_momentum,
+            "lr": muon_config.lr,
+            "beta": muon_config.muon_beta,
             "weight_decay": muon_config.muon_decay,
             "eps": muon_config.adam_eps,
             "use_muon": True
@@ -203,7 +205,8 @@ class MuonClip(Optimizer):
                         state["velocity_buffer"] = torch.zeros((p.size(-2),1)).to(p.device)
                         state["step"] = 0
                     state["step"] += 1
-                    update = muon_update(p.grad, state["momentum_buffer"],state["velocity_buffer"], step=state["step"], beta=group["momentum"], eps=group["eps"], ortho_polynomials=self.ortho_polynomials, ns_steps=self.ns_steps, better_ortho=self.better_ortho)
+                    if state["velocity_buffer"].max() > max_global: max_global = state["velocity_buffer"].max()
+                    update = muon_update(p.grad, state["momentum_buffer"],state["velocity_buffer"], step=state["step"], beta=group["beta"], eps=group["eps"], ortho_polynomials=self.ortho_polynomials, ns_steps=self.ns_steps, cans_ortho=self.cans_ortho)
                     p.mul_(1 - group["lr"] * group["weight_decay"])
                     p.add_(update.reshape(p.shape), alpha=-group["lr"])
                 
