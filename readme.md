@@ -30,24 +30,25 @@ from transformers import AutoConfig
 model_config = AutoConfig.from_pretrained("{hf_model}")
 
 muon_config = MuonConfig(
-    muon_lr: float = 5e-2 
-    muon_momentum: float = 0.95
+    lr: float = 1e-4
+
+    muon_beta: float = 0.95
     muon_decay: float = 0.0
     ns_steps:int = 5 #Number of newton-shulz interations. Increase for more precision during orthogonalization
 
+    adam_betas: Tuple[float, float] = (0.9, 0.95)
+    adam_decay: float = 0.0
+    adam_eps: float = 1e-10
 
     enable_clipping: bool = True
     clipping_layers_mapping = {"q_proj":"q_proj","k_proj":"k_proj"} # If using a special model with non standard q_proj and k_proj names. Just change the value to the desired name.
     clipping_threshold: float = 50.0
     clipping_alpha: float = 0.5
 
-    adam_lr: float = 5e-4
-    adam_betas: Tuple[float, float] = (0.9, 0.95)
-    adam_decay: float = 0.0
-    adam_eps: float = 1e-10
-
-    log_dir: str = "./logs" # save metrics for tensorboard. Leave it empty to disable. 
-    better_ortho:bool = False # Experimental: Use CANS orthogonalization. Suggest to disable it for now (It's not optimized at all).
+    log_max_logits:bool = True
+    log_dir: str = "./logs" #leave it empty to disable
+    cans_ortho:bool = False # Experimental: Use CANS orthogonalization. Suggest to disable it for now.
+    estimate_lower_bound:bool = False 
 )
 
 optimizer = MuonClip(model, model_config, muon_config)
