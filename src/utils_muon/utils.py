@@ -110,17 +110,17 @@ import numpy as np
 import math
 
 def c_n_k(n, k):
-    # version robuste/entière
+    # robust/integer version
     return math.comb(n, k)
 
 
 # ---------------------------------------------------------------------
-# Kovarik (formule de secours si le système linéaire devient singulier)
+# Kovarik (fallback formula if the linear system becomes singular)
 # Zdislav Kovarik, "Some Iterative Methods for Improving Orthonormality", 1970
 # ---------------------------------------------------------------------
 def kovarik_formula(degree: int) -> np.poly1d:
     p = np.zeros(degree + 1, dtype=float)
-    p[1] += 1.0  # coefficient de x^1
+    p[1] += 1.0  # coefficient of x^1
     a = 1.0
     for i in range(1, (degree + 1) // 2):
         for j in range(2 * (i - 1) + 1, 2 * i + 1):
@@ -137,45 +137,44 @@ _A, _B = None, None
 
 def get_polynomial(Ext: np.ndarray) -> np.ndarray:
     """
-    Construit et résout le système d'équirépartition de l'erreur :
-        sum_{k=1..n} a_k x^{2k-1} - 1 = s_i * E  sur les n+1 points 'Ext'
-    où s_i = (-1)^i (alternance des signes).
-    Retourne le vecteur c = [a_1, a_3, ..., a_{2n-1}, E].
+    Builds and solves the equioscillation error system:
+        sum_{k=1..n} a_k x^{2k-1} - 1 = s_i * E  on the n+1 points 'Ext'
+    where s_i = (-1)^i (alternating signs).
+    Returns the vector c = [a_1, a_3, ..., a_{2n-1}, E].
     """
     n = len(Ext) - 1
     A = np.zeros((n + 1, n + 1), dtype=float)
     b = np.ones(n + 1, dtype=float)
     
     for i, x in enumerate(Ext):
-        # colonnes pour x^1, x^3, ..., x^{2n-1}
+        # columns for x^1, x^3, ..., x^{2n-1}
         for k in range(n):
             A[i, k] = x ** (2 * k + 1)  # Fixed: should be 2k+1, not 2(k+1)-1
-        # colonne de l'erreur alternée
+        # column for the alternating error
         A[i, n] = (-1.0) ** i  # Fixed: cleaner alternating sign
     
-    # résolution
+    # solve the system
     c = np.linalg.solve(A, b)
-    return c  # longueur n+1
+    return c  # length n+1
 
 
 def get_ext(a_odd: np.ndarray) -> np.ndarray:
     """
-    À partir des coefficients 'a_odd' (a1, a3, ..., a_{2n-1}),
-    on construit p(x) = sum a_{2k-1} x^{2k-1}, on dérive p'(x),
-    puis on récupère ses racines réelles dans l'intervalle (_A, _B).
-    Ce sont (en pratique) les n-1 nouveaux points extrémaux internes.
+    From the coefficients 'a_odd' (a1, a3, ..., a_{2n-1}),
+    we build p(x) = sum a_{2k-1} x^{2k-1}, then compute p'(x),
+    and extract its real roots within the interval (_A, _B).
+    These are (in practice) the n-1 new internal extremal points.
     """
     n = len(a_odd)
     if n <= 1:
         return np.array([], dtype=float)
 
-    # Coefficients du polynôme p en ordre décroissant pour np.poly1d
-    # Taille 2n (degré max 2n-1). Les positions correspondant aux
-    # puissances paires restent nulles, les impaires prennent a_odd.
+    # Coefficients of polynomial p in decreasing order for np.poly1d
+    # Size 2n (max degree 2n-1). Even powers remain zero, odd powers get a_odd.
     coeffs = np.zeros(2 * n, dtype=float)  # indices 0..2n-1 (deg 2n-1 down to 0)
     
-    # pour k=0..n-1, terme a_odd[k] * x^{2k+1}
-    # index dans 'coeffs' (ordre décroissant) pour x^{deg} est: idx = (2n-1) - deg
+    # for k=0..n-1, term a_odd[k] * x^{2k+1}
+    # index in 'coeffs' (descending order) for x^{deg} is: idx = (2n-1) - deg
     for k in range(n):
         deg = 2 * k + 1
         idx = (2 * n - 1) - deg
@@ -390,28 +389,32 @@ def adam_update(grad, buf1, buf2, step, betas, eps):
     return buf1c / (buf2c.sqrt() + eps)
 
 
-def muon_update(grad, momentum, velocity, eps, step, ortho_polynomials, beta:float=0.95, ns_steps:int=5, nesterov:bool=True, better_ortho:bool=False):
+def muon_update(grad, momentum, velocity, eps, step, ortho_polynomials, betas, ns_steps:int=5, nesterov:bool=True, cans_ortho:bool=False):
     if grad.ndim != 2:
         raise ValueError(f"Input tensor must be 2D but got shape {grad.shape}")
     
-    momentum.lerp_(grad, 1 - beta)
-    grad = grad.lerp_(momentum, beta) if nesterov else momentum
+    momentum.lerp_(grad, 1 - betas[0])
+    grad = grad.lerp_(momentum, betas[0]) if nesterov else momentum
     if grad.ndim == 4: # for the case of conv filters
         grad = grad.view(len(grad), -1)
 
     is_transpose = grad.size(0) > grad.size(1)
     if is_transpose: grad = grad.T  
-    if better_ortho: grad = newton_schulz_accelerated(grad, iter=ns_steps, ortho_polynomials=ortho_polynomials)
+    if cans_ortho: grad = newton_schulz_accelerated(grad, iter=ns_steps, ortho_polynomials=ortho_polynomials)
     else: grad = newtonschulz(grad, steps=ns_steps)
     grad *= max(1, grad.size(-2) / grad.size(-1))**0.5
     if is_transpose: grad = grad.T
+
+    # rms aligned update, proof (lemma A): https://arxiv.org/pdf/2502.16982
+    grad = (0.4*max((grad.size(0),grad.size(1)))**0.5)*grad
+
+    #print(torch.linalg.vector_norm(grad,dim=-1,keepdim=True).min().item(), torch.linalg.vector_norm(grad,dim=-1,keepdim=True).max().item())
+    velocity.lerp_(torch.linalg.vector_norm(grad,dim=-1,keepdim=True)**2,1-betas[1])
+    velocity=torch.mul(velocity,1/(1-betas[1]**step))
+    grad = torch.mul(grad,1/(velocity.sqrt()+eps))
     
-    velocity.lerp_(torch.linalg.vector_norm(grad,dim=-1,keepdim=True),1-beta)
-    velocity=torch.mul(velocity,1/(1-beta**step))
-    grad = torch.mul(grad,1/torch.sqrt(velocity+eps))
-
     return grad
-
+ 
 
 
 
