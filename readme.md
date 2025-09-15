@@ -5,7 +5,7 @@ This repository presents an implementation of the Muon optimizer, enhanced with 
 ## Key Features
 
 - **QK-Clipping**: Introduces a mechanism to stabilize training by clipping attention logits for each head.
--**Corrected RMS**: Corrected Muon's update RMS to ensure a compatible learning rate between Muon and Adam
+- **Corrected RMS**: Corrected Muon's update RMS to ensure a compatible learning rate between Muon and Adam
 - **Esasy to use**: Designed to integrate seamlessly with existing transformer and pytorch architectures. Designed to be used as a regular pytorch optimizer.
 - **Scalability**: Optimized for large-scale training scenarios and implemented for DDP training.
 - **Efficient orthogonalization**: Designed to improve gradients orthogonalization via CANS method, a better newton-shulz iteration with eigenvalues interval estimation and chebychev polynomials. (**Experimental**)
