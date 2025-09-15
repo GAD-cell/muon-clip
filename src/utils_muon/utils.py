@@ -389,12 +389,12 @@ def adam_update(grad, buf1, buf2, step, betas, eps):
     return buf1c / (buf2c.sqrt() + eps)
 
 
-def muon_update(grad, momentum, velocity, eps, step, ortho_polynomials, betas, ns_steps:int=5, nesterov:bool=True, cans_ortho:bool=False):
+def muon_update(grad, momentum, velocity, eps, step, ortho_polynomials, beta, ns_steps:int=5, nesterov:bool=True, cans_ortho:bool=False):
     if grad.ndim != 2:
         raise ValueError(f"Input tensor must be 2D but got shape {grad.shape}")
     
-    momentum.lerp_(grad, 1 - betas[0])
-    grad = grad.lerp_(momentum, betas[0]) if nesterov else momentum
+    momentum.lerp_(grad, 1 - beta)
+    grad = grad.lerp_(momentum, beta) if nesterov else momentum
     if grad.ndim == 4: # for the case of conv filters
         grad = grad.view(len(grad), -1)
 
@@ -408,11 +408,6 @@ def muon_update(grad, momentum, velocity, eps, step, ortho_polynomials, betas, n
     # rms aligned update, proof (lemma A): https://arxiv.org/pdf/2502.16982
     grad = (0.4*max((grad.size(0),grad.size(1)))**0.5)*grad
 
-    #print(torch.linalg.vector_norm(grad,dim=-1,keepdim=True).min().item(), torch.linalg.vector_norm(grad,dim=-1,keepdim=True).max().item())
-    velocity.lerp_(torch.linalg.vector_norm(grad,dim=-1,keepdim=True)**2,1-betas[1])
-    velocity=torch.mul(velocity,1/(1-betas[1]**step))
-    grad = torch.mul(grad,1/(velocity.sqrt()+eps))
-    
     return grad
  
 

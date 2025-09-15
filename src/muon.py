@@ -20,7 +20,7 @@ class MuonConfig:
 
     lr: float = 1e-4
 
-    muon_betas: Tuple[float, float] = (0.9, 0.999)
+    muon_beta: float = 0.95
     muon_decay: float = 0.0
     ns_steps:int = 5 #Number of newton-shulz interations. Increase for more precision during orthogonalization
 
@@ -110,7 +110,7 @@ class MuonClip(Optimizer):
         muon_dic = {
             "params": muon_group,
             "lr": muon_config.lr,
-            "betas": muon_config.muon_betas,
+            "beta": muon_config.muon_beta,
             "weight_decay": muon_config.muon_decay,
             "eps": muon_config.adam_eps,
             "use_muon": True
@@ -206,7 +206,7 @@ class MuonClip(Optimizer):
                         state["step"] = 0
                     state["step"] += 1
                     if state["velocity_buffer"].max() > max_global: max_global = state["velocity_buffer"].max()
-                    update = muon_update(p.grad, state["momentum_buffer"],state["velocity_buffer"], step=state["step"], betas=group["betas"], eps=group["eps"], ortho_polynomials=self.ortho_polynomials, ns_steps=self.ns_steps, cans_ortho=self.cans_ortho)
+                    update = muon_update(p.grad, state["momentum_buffer"],state["velocity_buffer"], step=state["step"], beta=group["beta"], eps=group["eps"], ortho_polynomials=self.ortho_polynomials, ns_steps=self.ns_steps, cans_ortho=self.cans_ortho)
                     p.mul_(1 - group["lr"] * group["weight_decay"])
                     p.add_(update.reshape(p.shape), alpha=-group["lr"])
                 
