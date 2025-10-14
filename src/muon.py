@@ -29,7 +29,7 @@ class MuonConfig:
     adam_eps: float = 1e-10
 
     enable_clipping: bool = True
-    clipping_layers_mapping = {"q_proj":"q_proj","k_proj":"k_proj"} # If using a special model with non standard q_proj and k_proj names. Just change the value to the desired name.
+    clipping_layers_mapping: dict = {"q_proj":"q_proj","k_proj":"k_proj"} # If using a special model with non standard q_proj and k_proj names. Just change the value to the desired name.
     clipping_threshold: float = 50.0
     clipping_alpha: float = 0.5
 
