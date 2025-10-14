@@ -6,7 +6,7 @@ from torch.utils.tensorboard import SummaryWriter
 import re
 import wandb
 from typing import Tuple, Dict
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 from utils_muon import adam_update, muon_update, HookRecorder, repeat_kv, override_model, OrthoPolynomials
 
@@ -29,7 +29,9 @@ class MuonConfig:
     adam_eps: float = 1e-10
 
     enable_clipping: bool = True
-    clipping_layers_mapping: Dict[str,str] = {"q_proj":"q_proj","k_proj":"k_proj"} # If using a special model with non standard q_proj and k_proj names. Just change the value to the desired name.
+    clipping_layers_mapping: Dict[str,str] = field(
+        default_factory=lambda: {"q_proj": "q_proj", "k_proj": "k_proj"}
+    ) # If using a special model with non standard q_proj and k_proj names. Just change the value to the desired name.
     clipping_threshold: float = 50.0
     clipping_alpha: float = 0.5
 
