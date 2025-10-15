@@ -17,8 +17,10 @@ def is_deepspeed():
 
 @dataclass
 class MuonConfig:
-
+    unified_lr: bool = True # If true, use the same learning rate for both Muon and Adam parts of the optimizer.
     lr: float = 1e-4
+    lr_muon: float = 1e-4 # Only used if unified_lr is False
+    lr_adam: float = 1e-4
 
     muon_beta: float = 0.95
     muon_decay: float = 0.0
@@ -84,7 +86,11 @@ class MuonClip(Optimizer):
 
         self.hook_recorder = HookRecorder(target_layer=muon_config.clipping_layers_mapping["q_proj"]) # can also be k_proj. Hooks only the input activations. Since q_proj and k_proj have the same input activations it doesn't matter.
         override_model(model, self.hook_recorder) #make model.eval() and model.train() disable/activate hooks
-
+        
+        if muon_config.unified_lr:
+            muon_config.lr_muon = muon_config.lr
+            muon_config.lr_adam = muon_config.lr
+            
         self.t = muon_config.clipping_threshold
         self.alpha = muon_config.clipping_alpha
         self.muon_config = muon_config  
@@ -111,7 +117,7 @@ class MuonClip(Optimizer):
 
         muon_dic = {
             "params": muon_group,
-            "lr": muon_config.lr,
+            "lr": muon_config.lr_muon,
             "beta": muon_config.muon_beta,
             "weight_decay": muon_config.muon_decay,
             "eps": muon_config.adam_eps,
@@ -120,7 +126,7 @@ class MuonClip(Optimizer):
 
         adam_dic = {
             "params": adam_group,
-            "lr": muon_config.lr,
+            "lr": muon_config.lr_adam,
             "betas": muon_config.adam_betas,
             "eps": muon_config.adam_eps,
             "weight_decay": muon_config.adam_decay,
