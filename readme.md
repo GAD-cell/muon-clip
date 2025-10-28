@@ -23,25 +23,28 @@ from transformers import AutoConfig
 model_config = AutoConfig.from_pretrained("{hf_model}")
 
 muon_config = MuonConfig(
-    lr: float = 1e-4
+    unified_lr=True # If true, use the same learning rate for both Muon and Adam parts of the optimizer.
+    lr=1e-5
+    lr_muon=1e-4 # Only used if unified_lr is False
+    lr_adam=1e-4
 
-    muon_beta: float = 0.95
-    muon_decay: float = 0.0
-    ns_steps:int = 5 #Number of newton-shulz interations. Increase for more precision during orthogonalization
+    muon_beta=0.95
+    muon_decay=0.0
+    ns_steps=5 #Number of newton-shulz interations. Increase for more precision during orthogonalization
 
-    adam_betas: Tuple[float, float] = (0.9, 0.95)
-    adam_decay: float = 0.0
-    adam_eps: float = 1e-10
+    adam_betas=(0.9, 0.95)
+    adam_decay=0.0
+    adam_eps=1e-10
 
-    enable_clipping: bool = True
-    clipping_layers_mapping = {"q_proj":"q_proj","k_proj":"k_proj"} # If using a special model with non standard q_proj and k_proj names. Just change the value to the desired name.
-    clipping_threshold: float = 50.0
-    clipping_alpha: float = 0.5
+    enable_clipping=True
+    clipping_layers_mapping={"q_proj": "q_proj", "k_proj": "k_proj"} # If using a special model with non standard q_proj and k_proj names. Just change the value to the desired name.
+    clipping_threshold=50.0
+    clipping_alpha=0.5
 
-    log_max_logits:bool = True
-    log_dir: str = "./logs" #leave it empty to disable
-    cans_ortho:bool = False # Experimental: Use CANS orthogonalization. Suggest to disable it for now.
-    estimate_lower_bound:bool = False 
+    log_max_logits=True
+    log_dir="./logs"
+    cans_ortho=False # Experimental: Use CANS orthogonalization. Suggest to disable it for now.
+    estimate_lower_bound=False
 )
 
 optimizer = MuonClip(model, model_config, muon_config)
