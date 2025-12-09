@@ -41,7 +41,7 @@ class HookRecorder:
     def register_input_hook(self, model):
 
         if self.is_registered : return
-
+        found_layer = False
         for name, module in model.named_modules():
             if m := re.match(r".*layers\.(\d+)\.self_attn\.(q_proj)$", name):
                 layer_idx = int(m.group(1))
